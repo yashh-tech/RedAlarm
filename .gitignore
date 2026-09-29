@@ -1,0 +1,7 @@
+venv/
+.vs/
+Screenshots/
+.buildozer/
+bin/
+*.pyc
+__pycache__/

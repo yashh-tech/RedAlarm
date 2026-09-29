@@ -1,0 +1,14 @@
+<!--
+    Paste this INSIDE the <application> tag of the generated manifest
+    template (see java_src/README.md for the exact path). It registers
+    the optional KivyAlarmReceiver from KivyAlarmReceiver.java so it is
+    notified when the phone finishes booting.
+-->
+<receiver
+    android:name="org.kivy.android.KivyAlarmReceiver"
+    android:exported="true"
+    android:enabled="true">
+    <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+    </intent-filter>
+</receiver>
