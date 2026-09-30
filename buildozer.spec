@@ -9,12 +9,14 @@ source.include_exts = py,png,jpg,jpeg,kv,atlas,mp3,wav,ogg,m4a,json,ttf
 
 version = 1.0.0
 
-requirements = python3,kivy==2.3.1,plyer,charset-normalizer==2.1.1
+# Keep this minimal. Do not add charset-normalizer.
+requirements = python3,kivy==2.3.1,plyer
 
 orientation = portrait
 fullscreen = 0
 
-android.api = 36
+# API 34 is a safer target for the current python-for-android toolchain.
+android.api = 34
 android.minapi = 24
 android.ndk = 28c
 android.ndk_api = 24
