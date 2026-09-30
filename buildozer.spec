@@ -10,7 +10,7 @@ source.include_exts = py,png,jpg,jpeg,kv,atlas,mp3,wav,ogg,m4a,json,ttf
 version = 1.0.0
 
 # Keep this minimal. Do not add charset-normalizer.
-requirements = python3==3.11.6,hostpython3==3.11.6,kivy==2.3.1,plyer,filetype,charset-normalizer==2.1.1
+requirements=python3==3.11.6,hostpython3==3.11.6,kivy==2.3.1,plyer,filetype,charset-normalizer>=2.1.1
 
 orientation = portrait
 fullscreen = 0
