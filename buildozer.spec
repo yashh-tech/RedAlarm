@@ -26,7 +26,7 @@ android.accept_sdk_license = True
 # ========== ANDROID PERMISSIONS ==========
 android.permissions = SCHEDULE_EXACT_ALARM,SET_ALARM,RECEIVE_BOOT_COMPLETED,WAKE_LOCK,INTERNET
 
-android.features = android.hardware.alarm
+#android.features = android.hardware.alarm
 
 # ========== MANIFEST & JAVA ==========
 p4a.bootstrap = sdl2
