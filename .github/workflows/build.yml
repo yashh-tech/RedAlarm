@@ -48,8 +48,15 @@ jobs:
       - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip setuptools
-          python -m pip install "cython<3.4"
-          python -m pip install buildozer
+          python -m pip install buildozer==1.6.0
+
+      - name: Show Build Environment
+        run: |
+          python --version
+          buildozer --version
+          java -version
+          echo "----- buildozer.spec -----"
+          sed -n '1,220p' buildozer.spec
 
       - name: Build APK
         env:
