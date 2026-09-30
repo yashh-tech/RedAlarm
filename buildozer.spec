@@ -1,35 +1,34 @@
-name: Build RedAlarm APK
+[app]
 
-on:
-  push:
-    branches: [ "main" ]
-  workflow_dispatch:
+title = RedAlarm
+package.name = redalarm
+package.domain = org.yashtech
 
-jobs:
-  build:
-    runs-on: ubuntu-22.04
+source.dir = .
+source.include_exts = py,png,jpg,jpeg,kv,atlas,mp3,wav,ogg,m4a,ttf,json
 
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+version = 1.0
 
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
+requirements = python3,kivy,plyer
 
-      - name: Install Buildozer and System Dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
-          pip install --upgrade pip setuptools "cython<3.0.0" buildozer
+orientation = portrait
 
-      - name: Accept Android SDK Licenses & Build
-        run: |
-          yes | buildozer android debug
+fullscreen = 0
 
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: RedAlarm-APK
-          path: bin/*.apk
+android.api = 35
+android.minapi = 23
+android.ndk = 28b
+android.archs = arm64-v8a
+
+android.accept_sdk_license = True
+
+# Icon - uncomment this only if the file actually exists
+#icon.filename = %(source.dir)s/icon.png
+
+# Presplash - uncomment this only if the file actually exists
+#presplash.filename = %(source.dir)s/presplash.png
+
+[buildozer]
+
+log_level = 2
+warn_on_root = 0
