@@ -1,22 +1,35 @@
-[app]
-title = RedAlarm
-package.name = redalarm
-package.domain = org.systopic
-source.dir = .
-source.include_exts = py,png,jpg,kv,atlas
-version = 0.1
-requirements = python3,kivy
+name: Build RedAlarm APK
 
-# If your java_src folder contains custom Java code for native Android alarms, uncomment the line below:
-# android.add_src = java_src
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
 
-orientation = portrait
-fullscreen = 0
-android.permissions = INTERNET, VIBRATE, WAKE_LOCK, RECEIVE_BOOT_COMPLETED
-android.api = 33
-android.minapi = 21
-android.accept_sdk_license = True
+jobs:
+  build:
+    runs-on: ubuntu-22.04
 
-[buildozer]
-log_level = 2
-warn_on_root = 1
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Buildozer and System Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
+          pip install --upgrade pip setuptools "cython<3.0.0" buildozer
+
+      - name: Accept Android SDK Licenses & Build
+        run: |
+          yes | buildozer android debug
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedAlarm-APK
+          path: bin/*.apk
