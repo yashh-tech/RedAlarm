@@ -24,14 +24,17 @@ android.archs = arm64-v8a
 android.accept_sdk_license = True
 
 # ========== ANDROID PERMISSIONS ==========
-android.permissions = SCHEDULE_EXACT_ALARM,SET_ALARM,RECEIVE_BOOT_COMPLETED,WAKE_LOCK,INTERNET
+# Required permissions for alarm functionality on Android 12+
+android.permissions = SCHEDULE_EXACT_ALARM,SET_ALARM,RECEIVE_BOOT_COMPLETED,WAKE_LOCK,INTERNET,POST_NOTIFICATIONS
 
-#android.features = android.hardware.alarm
+# Required for Android 12+ - declare which alarms will be scheduled
+android.uses_feature = android.hardware.alarm
 
 # ========== MANIFEST & JAVA ==========
 p4a.bootstrap = sdl2
 
-android.manifest_additions = <receiver android:name="org.kivy.android.KivyAlarmReceiver"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter></receiver>
+# Manifest additions for alarm receiver and notification permissions
+android.manifest_additions = <uses-feature android:name="android.hardware.alarm" android:required="false" /><receiver android:name="org.kivy.android.KivyAlarmReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" /></intent-filter></receiver>
 
 # ========== JAVA SOURCE ==========
 android.add_src = java_src/
