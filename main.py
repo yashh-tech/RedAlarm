@@ -1081,8 +1081,7 @@ class AlarmRingScreen(Screen):
         # Safety net: whichever way we leave this screen, sound + timer stop.
         self._stop_common()
 
-    def start_ringing(self, alarm):
-
+def start_ringing(self, alarm):
     if ANDROID:
         try:
             window = PythonActivity.mActivity.getWindow()
