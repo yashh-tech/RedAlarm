@@ -1,14 +1,21 @@
-<!--
-    Paste this INSIDE the <application> tag of the generated manifest
-    template (see java_src/README.md for the exact path). It registers
-    the optional KivyAlarmReceiver from KivyAlarmReceiver.java so it is
-    notified when the phone finishes booting.
--->
+android.manifest_additions = """
+<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
+
+<uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+<uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
 <receiver
-    android:name="org.kivy.android.KivyAlarmReceiver"
-    android:exported="true"
-    android:enabled="true">
+    android:name="org.yashtech.redalarm.KivyAlarmReceiver"
+    android:enabled="true"
+    android:exported="false">
     <intent-filter>
+        <action android:name="org.yashtech.redalarm.ACTION_FIRE" />
         <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+        <action android:name="android.intent.action.TIME_SET" />
+        <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+        <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
     </intent-filter>
 </receiver>
+"""

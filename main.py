@@ -176,10 +176,15 @@ class _CrashLogger(ExceptionHandler):
 # runs on Windows. Plug the pyjnius bridge back in here when porting.
 # ----------------------------------------------------------------------
 if ANDROID:
-    from jnius import autoclass, cast  # noqa: F401
-    from android.permissions import request_permissions, Permission  # noqa: F401
+    from jnius import autoclass
+    from android import activity as android_activity
+    from android.permissions import request_permissions
 
-
+    AndroidBuild = autoclass("android.os.Build")
+    PythonActivity = autoclass("org.kivy.android.PythonActivity")
+    AndroidAlarmReceiver = autoclass(
+        "org.yashtech.redalarm.KivyAlarmReceiver"
+    )
 # ======================================================================
 # 2. STORAGE + SCHEDULING
 # ======================================================================
@@ -233,64 +238,194 @@ class AlarmStore:
 
 
 class AlarmScheduler:
-    """On desktop, alarms are simulated purely in Python/Kivy (Android would
-    use AlarmManager instead — no OS-level wakeup here).
-
-    IMPORTANT FIX: this used to schedule one long `Clock.schedule_once(fn,
-    big_delay)` per alarm. That is fragile in practice on Windows: if the
-    window is minimized/unfocused for a while, Kivy's render-driven Clock
-    can stall, and a single timer computed *in advance* has no way to
-    "catch up" afterwards — it just never fires. That matches exactly what
-    you were seeing (alarms silently not buzzing after a while).
-
-    The fix is a small POLLING loop instead: every pending alarm's target
-    time is just a value in a dict, and a `schedule_interval` ticking once
-    a second checks "has this time already passed?". Even if the Clock
-    gets throttled for a stretch, the very next tick after it resumes will
-    notice the time has passed and fire immediately — it's self-correcting
-    instead of depending on one long timer firing exactly on schedule.
+    """Desktop uses Kivy Clock.
+    Android uses the real Android AlarmManager.
     """
 
     def __init__(self, on_desktop_fire):
-        self._pending = {}    # key (alarm_id[+salt]) -> (alarm_id, trigger_dt)
+        self._pending = {}
         self._on_desktop_fire = on_desktop_fire
-        self._poll_event = Clock.schedule_interval(self._poll, 1.0)
+        self._poll_event = Clock.schedule_interval(
+            self._poll,
+            1.0
+        )
+
+    @staticmethod
+    def _android_context():
+        return PythonActivity.mActivity
+
+    @staticmethod
+    def _repeat_mask(alarm):
+        mask = 0
+        days = alarm.get("days") or []
+
+        for i, enabled in enumerate(days):
+            if enabled:
+                mask |= (1 << i)
+
+        return mask
+
+    def _android_schedule(
+            self,
+            alarm_id,
+            trigger_dt,
+            alarm,
+            snooze=False):
+
+        context = self._android_context()
+
+        if not AndroidAlarmReceiver.canScheduleExactAlarms(
+                context):
+
+            print(
+                "[RedAlarm] Exact alarm access is not granted."
+            )
+
+            AndroidAlarmReceiver.requestExactAlarmAccess(
+                context
+            )
+
+            return False
+
+        trigger_ms = int(
+            trigger_dt.timestamp() * 1000
+        )
+
+        AndroidAlarmReceiver.scheduleAlarm(
+            context,
+            trigger_ms,
+            alarm_id,
+            bool(snooze),
+            alarm.get("label") or "Alarm",
+            int(alarm.get("hour", 0)),
+            int(alarm.get("minute", 0)),
+            self._repeat_mask(alarm) if not snooze else 0
+        )
+
+        return True
 
     def schedule(self, alarm, now=None):
-        trigger_dt = compute_next_trigger_dt(alarm, now=now)
-        if not ANDROID:
-            self._pending[alarm["id"]] = (alarm["id"], trigger_dt)
+        trigger_dt = compute_next_trigger_dt(
+            alarm,
+            now=now
+        )
+
+        if ANDROID:
+            self._android_schedule(
+                alarm["id"],
+                trigger_dt,
+                alarm,
+                snooze=False
+            )
+        else:
+            self._pending[alarm["id"]] = (
+                alarm["id"],
+                trigger_dt
+            )
+
         return trigger_dt
 
     def cancel(self, alarm):
-        self._pending.pop(alarm["id"], None)
+        if ANDROID:
+            try:
+                AndroidAlarmReceiver.cancelAlarm(
+                    self._android_context(),
+                    alarm["id"],
+                    False
+                )
+            except Exception as exc:
+                print(
+                    "[RedAlarm] Android cancel failed: {}"
+                    .format(exc)
+                )
+            return
 
-    def schedule_snooze(self, alarm, trigger_dt):
-        if not ANDROID:
-            self._pending[alarm["id"] + "snooze"] = (alarm["id"], trigger_dt)
+        self._pending.pop(
+            alarm["id"],
+            None
+        )
+
+    def schedule_snooze(
+            self,
+            alarm,
+            trigger_dt):
+
+        if ANDROID:
+            self._android_schedule(
+                alarm["id"],
+                trigger_dt,
+                alarm,
+                snooze=True
+            )
+        else:
+            self._pending[
+                alarm["id"] + "snooze"
+            ] = (
+                alarm["id"],
+                trigger_dt
+            )
 
     def cancel_snooze(self, alarm):
-        self._pending.pop(alarm["id"] + "snooze", None)
+        if ANDROID:
+            try:
+                AndroidAlarmReceiver.cancelAlarm(
+                    self._android_context(),
+                    alarm["id"],
+                    True
+                )
+            except Exception as exc:
+                print(
+                    "[RedAlarm] Android snooze cancel failed: {}"
+                    .format(exc)
+                )
+            return
+
+        self._pending.pop(
+            alarm["id"] + "snooze",
+            None
+        )
 
     def next_trigger_for(self, alarm_id):
-        """Soonest pending trigger_dt for this alarm (regular or snoozed),
-        or None. Used by the Home screen's "next alarm in..." line."""
-        times = [t for key, (aid, t) in self._pending.items() if aid == alarm_id]
+        if ANDROID:
+            return None
+
+        times = [
+            t
+            for key, (aid, t)
+            in self._pending.items()
+            if aid == alarm_id
+        ]
+
         return min(times) if times else None
 
     def _poll(self, dt):
-        if not self._pending:
+        if ANDROID or not self._pending:
             return
+
         now = datetime.datetime.now()
-        due = [key for key, (_, t) in self._pending.items() if t <= now]
+
+        due = [
+            key
+            for key, (_, t)
+            in self._pending.items()
+            if t <= now
+        ]
+
         for key in due:
-            alarm_id, _ = self._pending.pop(key)
+
+            alarm_id, _ = (
+                self._pending.pop(key)
+            )
+
             try:
-                self._on_desktop_fire(alarm_id)
+                self._on_desktop_fire(
+                    alarm_id
+                )
             except Exception as exc:
-                # One bad alarm record must never take the others down with
-                # it — print and keep going.
-                print("[RedAlarm] error firing alarm {}: {}".format(alarm_id, exc))
+                print(
+                    "[RedAlarm] error firing alarm {}: {}"
+                    .format(alarm_id, exc)
+                )
 
 
 DEFAULT_RINGTONE_NAME = "Default Alarm Tone"
@@ -947,6 +1082,31 @@ class AlarmRingScreen(Screen):
         self._stop_common()
 
     def start_ringing(self, alarm):
+
+    if ANDROID:
+        try:
+            window = PythonActivity.mActivity.getWindow()
+
+            WindowManagerParams = autoclass(
+                "android.view.WindowManager$LayoutParams"
+            )
+
+            window.addFlags(
+                WindowManagerParams.FLAG_KEEP_SCREEN_ON
+                | WindowManagerParams.FLAG_SHOW_WHEN_LOCKED
+                | WindowManagerParams.FLAG_TURN_SCREEN_ON
+            )
+
+            if int(AndroidBuild.VERSION.SDK_INT) >= 27:
+                window.setShowWhenLocked(True)
+                window.setTurnScreenOn(True)
+
+        except Exception as exc:
+            print(
+                "[RedAlarm] Android window setup failed: {}"
+                .format(exc)
+            )
+
         self._stop_common()                  # kill any previous ring first
         self._ring_session += 1
         session = self._ring_session
@@ -1067,6 +1227,7 @@ class RedAlarmApp(App):
         self.ringtone_cache_dir = os.path.join(self.user_data_dir, "ringtones")
         self.default_ringtone_path = ensure_default_ringtone(self.ringtone_cache_dir)
         self.scheduler = AlarmScheduler(on_desktop_fire=self.handle_alarm_fired)
+        self._android_intent_bound = False
 
         if not ANDROID:
             Window.size = (380, 720)
@@ -1090,26 +1251,161 @@ class RedAlarmApp(App):
                     print("[RedAlarm] could not schedule alarm {}: {}"
                           .format(alarm.get("id"), exc))
 
+    def _handle_android_intent(self, intent):
+        if not ANDROID or intent is None:
+            return
+
+        try:
+            alarm_id = intent.getStringExtra("alarm_id")
+
+            if not alarm_id:
+                return
+
+            if intent.getAction() != AndroidAlarmReceiver.ACTION_FIRE:
+                return
+
+            # Prevent the same alarm intent from being processed again.
+            intent.removeExtra("alarm_id")
+
+            Clock.schedule_once(
+                lambda dt: self.handle_alarm_fired(alarm_id),
+                0
+            )
+
+        except Exception as exc:
+            print(
+                "[RedAlarm] Android intent handling failed: {}"
+                .format(exc)
+            )
+
+    def _on_android_new_intent(self, intent):
+        Clock.schedule_once(
+            lambda dt: self._handle_android_intent(intent),
+            0
+        )
+
+    def _resync_android_alarms(self):
+        if not ANDROID:
+            return
+
+        for alarm in self.store.all():
+            if not alarm.get("enabled", True):
+                continue
+
+            try:
+                self.scheduler.schedule(alarm)
+            except Exception as exc:
+                print(
+                    "[RedAlarm] Android alarm {} could not be scheduled: {}"
+                    .format(
+                        alarm.get("id"),
+                        exc
+                    )
+                )
+
+    def on_start(self):
+
+        if ANDROID:
+
+            # Receive an alarm intent when RedAlarm is already running.
+            if not self._android_intent_bound:
+                try:
+                    android_activity.bind(
+                        on_new_intent=self._on_android_new_intent
+                    )
+
+                    self._android_intent_bound = True
+
+                except Exception as exc:
+                    print(
+                        "[RedAlarm] Could not bind Android intent: {}"
+                        .format(exc)
+                    )
+
+            # Android 13+ notification permission.
+            try:
+                request_permissions([
+                    "android.permission.POST_NOTIFICATIONS"
+                ])
+            except Exception as exc:
+                print(
+                    "[RedAlarm] Notification permission request failed: {}"
+                    .format(exc)
+                )
+
+            # Register all saved alarms with Android AlarmManager.
+            self._resync_android_alarms()
+
+            # Handle an alarm that started the app from a stopped state.
+            try:
+                self._handle_android_intent(
+                    PythonActivity.mActivity.getIntent()
+                )
+            except Exception as exc:
+                print(
+                    "[RedAlarm] Initial Android intent failed: {}"
+                    .format(exc)
+                )
+
+        else:
+
+            # Keep the existing Windows/Desktop behaviour.
+            for alarm in self.store.all():
+                if alarm.get("enabled", True):
+                    try:
+                        self.scheduler.schedule(alarm)
+                    except Exception as exc:
+                        print(
+                            "[RedAlarm] could not schedule alarm {}: {}"
+                            .format(
+                                alarm.get("id"),
+                                exc
+                            )
+                        )
+
+    def on_resume(self):
+        if ANDROID:
+            self._resync_android_alarms()
+
     def handle_alarm_fired(self, alarm_id):
         alarm = self.store.get(alarm_id)
+
         if not alarm or not alarm.get("enabled", True):
             return
 
-        # Repeating alarms: queue the next occurrence right away. Looking
-        # 30s ahead guarantees a slightly-early timer can't re-queue the
-        # occurrence that is firing right now.
-        if any(alarm.get("days") or []):
-            self.scheduler.schedule(
-                alarm,
-                now=datetime.datetime.now() + datetime.timedelta(seconds=30),
-            )
+        # On Android, the Java AlarmManager receiver already schedules
+        # the next occurrence of a repeating alarm. Do NOT schedule it
+        # again from Python or we could create duplicate timers.
+        if not ANDROID:
+
+            if any(alarm.get("days") or []):
+                self.scheduler.schedule(
+                    alarm,
+                    now=(
+                        datetime.datetime.now()
+                        + datetime.timedelta(seconds=30)
+                    ),
+                )
 
         ring = self.root.get_screen("ring")
         ring.start_ringing(alarm)
         self.root.current = "ring"
 
     def on_stop(self):
+
         self.root.get_screen("ring")._stop_common()
+
+        if ANDROID and self._android_intent_bound:
+
+            try:
+                android_activity.unbind(
+                    on_new_intent=self._on_android_new_intent
+                )
+            except Exception:
+                pass
+
+            self._android_intent_bound = False
+
 
 
 if __name__ == "__main__":
