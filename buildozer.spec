@@ -18,7 +18,7 @@ fullscreen = 0
 android.api = 34
 android.minapi = 24
 android.ndk = 28c
-android.ndk_api = 24
+android.ndk_api = 24   
 android.archs = arm64-v8a
 
 android.accept_sdk_license = True
@@ -34,7 +34,7 @@ android.uses_feature = android.hardware.alarm
 p4a.bootstrap = sdl2
 
 # Manifest additions for alarm receiver and notification permissions
-android.manifest_additions = <uses-feature android:name="android.hardware.alarm" android:required="false" /><receiver android:name="org.kivy.android.KivyAlarmReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" /></intent-filter></receiver>
+android.manifest_additions = <uses-feature android:name="android.hardware.alarm" android:required="false" /><receiver android:name="org.yashtech.redalarm.KivyAlarmReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" /></intent-filter></receiver>
 
 # ========== JAVA SOURCE ==========
 android.add_src = java_src/
