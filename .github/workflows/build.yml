@@ -34,7 +34,7 @@ jobs:
             openjdk-17-jdk \
             autoconf \
             automake \
-            libtool \ 	
+            libtool \
             libltdl-dev \
             pkg-config \
             zlib1g-dev \
