@@ -172,15 +172,27 @@ if ANDROID:
 
     def _alarm_pending_intent(alarm_id, request_code, fire_token=None):
         intent = Intent(_activity().getApplicationContext(), PythonActivity)
+
+        # The action is already proven to arrive correctly on Android.
         intent.setAction("com.redalarm.FIRE_" + alarm_id)
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                        | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        intent.putExtra("alarm_id", alarm_id)
+
+        intent.setFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK
+            | Intent.FLAG_ACTIVITY_CLEAR_TOP
+            | Intent.FLAG_ACTIVITY_SINGLE_TOP
+        )
+
+        # Keep fire_token as an actual Java long, not a Python string.
         if fire_token is not None:
-            intent.putExtra("fire_token", str(fire_token))
+            intent.putExtra("fire_token", int(fire_token))
+
         flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        return PendingIntent.getActivity(_activity(), request_code, intent, flags)
+        return PendingIntent.getActivity(
+            _activity(),
+            request_code,
+            intent,
+            flags
+        )
 
     def android_schedule_alarm(alarm_id, trigger_dt, salt=""):
         request_code = stable_request_code(alarm_id, salt)
@@ -236,7 +248,22 @@ if ANDROID:
         intent = _activity().getIntent()
         if intent is None:
             return None, None
-        return intent.getStringExtra("alarm_id"), intent.getStringExtra("fire_token")
+
+        action = intent.getAction()
+        if not action:
+            return None, None
+
+        prefix = "com.redalarm.FIRE_"
+        if not action.startswith(prefix):
+            return None, None
+
+        alarm_id = action[len(prefix):]
+
+        fire_token = intent.getLongExtra("fire_token", -1)
+        if fire_token < 0:
+            return alarm_id, None
+
+        return alarm_id, str(fire_token)
 
     _wake_lock = [None]
 
