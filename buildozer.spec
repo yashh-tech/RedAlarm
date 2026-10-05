@@ -9,8 +9,8 @@ source.include_exts = py,png,jpg,jpeg,kv,atlas,mp3,wav,ogg,m4a,json,ttf
 
 version = 1.0.0
 
-# Pinned versions to avoid dependency conflicts in p4a build
-requirements = python3==3.11.6,hostpython3==3.11.6,kivy==2.3.1,plyer,filetype,charset-normalizer==2.1.1
+# Let pip resolve charset-normalizer automatically to avoid ResolutionImpossible.
+requirements = python3==3.11.6,hostpython3==3.11.6,kivy==2.3.1,plyer,filetype,charset-normalizer
 
 orientation = portrait
 fullscreen = 0
