@@ -9,9 +9,14 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.IBinder;
 
+/**
+ * Foreground service that keeps RedAlarm alive while alarms are scheduled.
+ * This allows the app to maintain alarm state and respond to AlarmManager triggers
+ * even if the main activity is not in the foreground or the screen is off.
+ */
 public class AlarmService extends Service {
-    private static final String CHANNEL_ID = "redalarm_background";
-    private static final int NOTIFICATION_ID = 1001;
+    private static final String CHANNEL_ID = "redalarm_alarms";
+    private static final int NOTIFICATION_ID = 1;
 
     @Override
     public void onCreate() {
@@ -21,6 +26,7 @@ public class AlarmService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Start as a foreground service with a notification
         startForeground(NOTIFICATION_ID, buildNotification());
         return START_STICKY;
     }
@@ -32,13 +38,13 @@ public class AlarmService extends Service {
 
         NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
-                "RedAlarm background monitoring",
+                "RedAlarm Background Service",
                 NotificationManager.IMPORTANCE_LOW
         );
-        channel.setDescription("Keeps RedAlarm alive while alarms are scheduled.");
-        channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+        channel.setDescription("Keeps RedAlarm running in the background while alarms are scheduled.");
+        channel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
 
-        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) {
             manager.createNotificationChannel(channel);
         }
@@ -46,7 +52,7 @@ public class AlarmService extends Service {
 
     private Notification buildNotification() {
         Intent appIntent = new Intent(this, PythonActivity.class);
-        appIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        appIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
         PendingIntent contentIntent = PendingIntent.getActivity(
                 this,
@@ -63,10 +69,9 @@ public class AlarmService extends Service {
         }
 
         builder.setContentTitle("RedAlarm")
-                .setContentText("Alarm service is running")
-                .setSmallIcon(android.R.drawable.stat_notify_alarm)
+                .setContentText("Alarm service running")
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentIntent(contentIntent)
-                .setOnlyAlertOnce(true)
                 .setOngoing(true)
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setPriority(Notification.PRIORITY_LOW);
