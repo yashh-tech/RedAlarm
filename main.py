@@ -162,6 +162,7 @@ if ANDROID:
     Uri = autoclass("android.net.Uri")
     WindowManagerFlags = autoclass("android.view.WindowManager$LayoutParams")
     KeyguardManager = autoclass("android.app.KeyguardManager")
+    JString = autoclass("java.lang.String")
 
     def _activity():
         return PythonActivity.mActivity
@@ -172,27 +173,24 @@ if ANDROID:
 
     def _alarm_pending_intent(alarm_id, request_code, fire_token=None):
         intent = Intent(_activity().getApplicationContext(), PythonActivity)
-
-        # The action is already proven to arrive correctly on Android.
         intent.setAction("com.redalarm.FIRE_" + alarm_id)
-
-        intent.setFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK
-            | Intent.FLAG_ACTIVITY_CLEAR_TOP
-            | Intent.FLAG_ACTIVITY_SINGLE_TOP
-        )
-
-        # Keep fire_token as an actual Java long, not a Python string.
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        # putExtra(String, ...) is heavily overloaded (String, CharSequence,
+        # char[], Object...), and pyjnius's overload resolution for a plain
+        # Python str picked the char[] one here on a real device, which
+        # getStringExtra() then rejects with a ClassCastException it
+        # swallows and returns null for — the alarm fires, singleTask
+        # correctly reuses the activity, onNewIntent correctly runs, and
+        # then this one line is why it silently never reaches
+        # handle_alarm_fired(). Wrapping in an explicit java.lang.String
+        # removes the ambiguity entirely.
+        intent.putExtra("alarm_id", JString(alarm_id))
         if fire_token is not None:
-            intent.putExtra("fire_token", int(fire_token))
-
+            intent.putExtra("fire_token", JString(str(fire_token)))
         flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        return PendingIntent.getActivity(
-            _activity(),
-            request_code,
-            intent,
-            flags
-        )
+        return PendingIntent.getActivity(_activity(), request_code, intent, flags)
 
     def android_schedule_alarm(alarm_id, trigger_dt, salt=""):
         request_code = stable_request_code(alarm_id, salt)
@@ -248,22 +246,7 @@ if ANDROID:
         intent = _activity().getIntent()
         if intent is None:
             return None, None
-
-        action = intent.getAction()
-        if not action:
-            return None, None
-
-        prefix = "com.redalarm.FIRE_"
-        if not action.startswith(prefix):
-            return None, None
-
-        alarm_id = action[len(prefix):]
-
-        fire_token = intent.getLongExtra("fire_token", -1)
-        if fire_token < 0:
-            return alarm_id, None
-
-        return alarm_id, str(fire_token)
+        return intent.getStringExtra("alarm_id"), intent.getStringExtra("fire_token")
 
     _wake_lock = [None]
 
