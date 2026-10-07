@@ -93,6 +93,14 @@
             size_hint_y: None
             height: "22dp"
 
+        Label:
+            text: root.next_alarm_text
+            font_size: "14sp"
+            bold: True
+            color: COL_RED
+            size_hint_y: None
+            height: "20dp"
+
         # ---------- BUTTONS ----------
         HomeButton:
             text: "Check Alarms"
@@ -221,6 +229,42 @@
                 bg_color: COL_RED
                 text_color: 1, 1, 1, 1
                 on_release: root.open_new_alarm()
+
+        HomeButton:
+            text: "Exact alarms are blocked - tap to allow"
+            size_hint: 1, None
+            height: 0 if root.exact_alarm_ok else dp(40)
+            opacity: 0 if root.exact_alarm_ok else 1
+            disabled: root.exact_alarm_ok
+            bold: False
+            font_size: "12.5sp"
+            bg_color: COL_RED_DIM
+            text_color: 1, 1, 1, 1
+            on_release: root.open_permission_settings()
+
+        HomeButton:
+            text: "Battery saver may kill alarms - tap to allow"
+            size_hint: 1, None
+            height: 0 if root.battery_ok else dp(40)
+            opacity: 0 if root.battery_ok else 1
+            disabled: root.battery_ok
+            bold: False
+            font_size: "12.5sp"
+            bg_color: COL_RED_DIM
+            text_color: 1, 1, 1, 1
+            on_release: root.open_battery_settings()
+
+        HomeButton:
+            text: "Allow display over other apps - tap to allow"
+            size_hint: 1, None
+            height: 0 if root.overlay_ok else dp(40)
+            opacity: 0 if root.overlay_ok else 1
+            disabled: root.overlay_ok
+            bold: False
+            font_size: "12.5sp"
+            bg_color: COL_RED_DIM
+            text_color: 1, 1, 1, 1
+            on_release: root.open_overlay_settings()
 
         ScrollView:
             do_scroll_x: False
@@ -461,12 +505,23 @@
                         halign: "left"
                         text_size: self.size
 
-                    HomeButton:
-                        text: root.sound_name
-                        bold: False
-                        bg_color: COL_CARD
-                        text_color: COL_TEXT
-                        on_release: root.choose_sound()
+                    BoxLayout:
+                        spacing: "8dp"
+
+                        HomeButton:
+                            text: root.sound_name
+                            bold: False
+                            bg_color: COL_CARD
+                            text_color: COL_TEXT
+                            on_release: root.choose_sound()
+
+                        HomeButton:
+                            text: "Preview"
+                            size_hint_x: None
+                            width: "84dp"
+                            bg_color: COL_RED_DIM
+                            text_color: 1, 1, 1, 1
+                            on_release: root.preview_sound()
 
                 # ---------- auto-dismiss + snooze (minutes + seconds) ----------
                 BoxLayout:
