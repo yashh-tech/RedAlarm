@@ -9,41 +9,32 @@ source.include_exts = py,png,jpg,jpeg,kv,atlas,mp3,wav,ogg,m4a,json,ttf
 
 version = 1.0.0
 
-# Keep this minimal. Do not add charset-normalizer.
 requirements = python3==3.11.6,hostpython3==3.11.6,kivy==2.3.1,plyer,filetype
 
 orientation = portrait
 fullscreen = 0
 
-# API 34 is a safer target for the current python-for-android toolchain.
 android.api = 34
 android.minapi = 24
 android.ndk = 28c
 android.ndk_api = 24
 android.archs = arm64-v8a
 
-# WAKE_LOCK                        -> keep the CPU alive while ringing
-# SCHEDULE_EXACT_ALARM/USE_EXACT_ALARM -> required on API 31+/33+ so the
-#                                    alarm fires at the exact minute
-# REQUEST_IGNORE_BATTERY_OPTIMIZATIONS -> lets the in-app banner open the
-#                                    "don't optimize this app" screen
-# POST_NOTIFICATIONS               -> required on API 33+ for the
-#                                    permanent "next alarm" notification
-# SYSTEM_ALERT_WINDOW               -> "display over other apps"; some OEM
-#                                    skins (MIUI/ColorOS/etc.) want this
-#                                    granted before they'll let a
-#                                    backgrounded app pop an activity
-android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,POST_NOTIFICATIONS,SYSTEM_ALERT_WINDOW
+# Alarm-clock delivery / active ringing behavior.
+android.permissions = WAKE_LOCK,USE_EXACT_ALARM,VIBRATE,POST_NOTIFICATIONS,USE_FULL_SCREEN_INTENT,RECEIVE_BOOT_COMPLETED,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
 
-# CRITICAL for alarms: without this, Android stacks a new copy of the
-# activity on top every time AlarmManager fires while the app is already
-# open, instead of reusing the one instance and routing it through
-# onNewIntent (which is what main.py's android.activity.bind hook needs).
+# Native alarm receiver is compiled into the APK and registered below.
+android.add_src = java_src
+android.extra_manifest_application_arguments = %(source.dir)s/java_src/manifest_receiver_snippet.xml
+
+# Intentional minimal presplash while the Kivy UI initializes.
+android.presplash_color = #0B0910
+
+# Reuse the existing activity and route alarm/action intents through onNewIntent.
 android.manifest.launch_mode = singleTask
 
 android.accept_sdk_license = True
 
 [buildozer]
-
 log_level = 2
 warn_on_root = 0
