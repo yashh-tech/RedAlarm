@@ -20,19 +20,15 @@ android.ndk = 28c
 android.ndk_api = 24
 android.archs = arm64-v8a
 
-# Alarm-clock delivery / active ringing behavior.
-android.permissions = WAKE_LOCK,USE_EXACT_ALARM,VIBRATE,POST_NOTIFICATIONS,USE_FULL_SCREEN_INTENT,RECEIVE_BOOT_COMPLETED,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+# All Android behavior is implemented in main.py. No extra Java/manifest
+# source files are required for this build.
+android.permissions = WAKE_LOCK,USE_EXACT_ALARM,VIBRATE,POST_NOTIFICATIONS,USE_FULL_SCREEN_INTENT,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
 
-# Native alarm receiver is compiled into the APK and registered below.
-android.add_src = java_src
-android.extra_manifest_application_arguments = %(source.dir)s/java_src/manifest_receiver_snippet.xml
-
-# Intentional minimal presplash while the Kivy UI initializes.
-android.presplash_color = #0B0910
-
-# Reuse the existing activity and route alarm/action intents through onNewIntent.
+# Reuse the existing Activity so Android alarm/notification action intents
+# arrive through onNewIntent when the app is already running.
 android.manifest.launch_mode = singleTask
 
+android.presplash_color = #0B0910
 android.accept_sdk_license = True
 
 [buildozer]
