@@ -125,7 +125,6 @@ if ANDROID:
     from android.permissions import Permission, request_permissions
 
     PythonActivity = autoclass("org.kivy.android.PythonActivity")
-    AlarmReceiver = autoclass("org.kivy.android.KivyAlarmReceiver")
     Intent = autoclass("android.content.Intent")
     PendingIntent = autoclass("android.app.PendingIntent")
     Context = autoclass("android.content.Context")
@@ -140,8 +139,6 @@ if ANDROID:
 
     _wake_lock = [None]
     _OPEN_DOCUMENT_REQUEST_CODE = 9001
-    _RINGING_NOTIFICATION_ID = 2001
-
     def _activity():
         return PythonActivity.mActivity
 
@@ -167,18 +164,12 @@ if ANDROID:
 
     def _alarm_pending_intent(alarm_id, request_code, fire_token=None,
                               label="", time_text=""):
-        context = _activity().getApplicationContext()
-        intent = Intent(context, AlarmReceiver)
-        intent.setAction(JString(ANDROID_FIRE_ACTION))
-        intent.putExtra("alarm_id", JString(alarm_id))
-        if fire_token is not None:
-            intent.putExtra("fire_token", JString(str(fire_token)))
-        if label:
-            intent.putExtra("alarm_label", JString(label))
-        if time_text:
-            intent.putExtra("alarm_time", JString(time_text))
-        flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        return PendingIntent.getBroadcast(_activity(), request_code, intent, flags)
+        # AlarmManager launches the existing PythonActivity directly.
+        # singleTask + on_new_intent handles the warm-background case, while
+        # an initial launch is handled from getIntent() during startup.
+        return _alarm_activity_pending_intent(
+            alarm_id, ANDROID_FIRE_ACTION, request_code, fire_token
+        )
 
     def android_schedule_alarm(alarm_id, trigger_dt, salt="", label="", time_text=""):
         request_code = stable_request_code(alarm_id, salt)
@@ -430,6 +421,108 @@ if ANDROID:
         except Exception as exc:
             print("[RedAlarm] vibration stop error:", exc)
 
+    _RINGING_NOTIFICATION_CHANNEL_ID = "redalarm_ringing_v2"
+    _RINGING_NOTIFICATION_ID = 2001
+
+    def android_ensure_ringing_notification_channel():
+        if Build.VERSION.SDK_INT < 26:
+            return
+        NotificationManager = autoclass("android.app.NotificationManager")
+        NotificationChannel = autoclass("android.app.NotificationChannel")
+        manager = cast(
+            "android.app.NotificationManager",
+            _activity().getSystemService(Context.NOTIFICATION_SERVICE),
+        )
+        channel = NotificationChannel(
+            JString(_RINGING_NOTIFICATION_CHANNEL_ID),
+            JString("Alarm ringing"),
+            NotificationManager.IMPORTANCE_HIGH,
+        )
+        channel.setDescription(JString("RedAlarm active alarm notifications"))
+        channel.setShowBadge(True)
+        manager.createNotificationChannel(channel)
+
+    def _notification_action_pending_intent(alarm_id, action, salt):
+        return _alarm_activity_pending_intent(
+            alarm_id,
+            action,
+            stable_request_code(alarm_id, salt),
+        )
+
+    def android_show_ringing_notification(alarm):
+        context = _activity().getApplicationContext()
+        android_ensure_ringing_notification_channel()
+
+        NotificationBuilder = autoclass("android.app.Notification$Builder")
+        Notification = autoclass("android.app.Notification")
+        if Build.VERSION.SDK_INT >= 26:
+            builder = NotificationBuilder(
+                context, JString(_RINGING_NOTIFICATION_CHANNEL_ID)
+            )
+        else:
+            builder = NotificationBuilder(context)
+            builder.setPriority(Notification.PRIORITY_MAX)
+
+        label = alarm.get("label") or "Alarm"
+        time_text = format_time(alarm.get("hour", 0), alarm.get("minute", 0))
+        content = "RedAlarm is ringing • {}".format(time_text)
+
+        AndroidR_drawable = autoclass("android.R$drawable")
+        open_pi = _alarm_activity_pending_intent(
+            alarm["id"],
+            ANDROID_NOTIF_OPEN_ACTION,
+            stable_request_code(alarm["id"], "notif_open"),
+        )
+        dismiss_pi = _notification_action_pending_intent(
+            alarm["id"], ANDROID_NOTIF_DISMISS_ACTION, "notif_dismiss"
+        )
+        snooze_pi = _notification_action_pending_intent(
+            alarm["id"], ANDROID_NOTIF_SNOOZE_ACTION, "notif_snooze"
+        )
+
+        builder.setSmallIcon(AndroidR_drawable.ic_lock_idle_alarm)
+        builder.setContentTitle(JString(label))
+        builder.setContentText(JString(content))
+        builder.setSubText(JString("Alarm ringing"))
+        builder.setCategory(Notification.CATEGORY_ALARM)
+        builder.setVisibility(Notification.VISIBILITY_PUBLIC)
+        builder.setPriority(Notification.PRIORITY_MAX)
+        builder.setAutoCancel(False)
+        builder.setOngoing(False)
+        builder.setOnlyAlertOnce(True)
+        builder.setShowWhen(False)
+        builder.setContentIntent(open_pi)
+
+        if Build.VERSION.SDK_INT >= 21:
+            full_screen_pi = _alarm_activity_pending_intent(
+                alarm["id"],
+                ANDROID_NOTIF_OPEN_ACTION,
+                stable_request_code(alarm["id"], "notif_fullscreen"),
+            )
+            builder.setFullScreenIntent(full_screen_pi, True)
+
+        builder.addAction(
+            AndroidR_drawable.ic_menu_close_clear_cancel,
+            JString("DISMISS"),
+            dismiss_pi,
+        )
+        builder.addAction(
+            AndroidR_drawable.ic_media_pause,
+            JString("SNOOZE"),
+            snooze_pi,
+        )
+
+        manager = cast(
+            "android.app.NotificationManager",
+            context.getSystemService(Context.NOTIFICATION_SERVICE),
+        )
+        manager.notify(_RINGING_NOTIFICATION_ID, builder.build())
+        print(
+            "[RedAlarm] ringing notification shown id={} label={!r}".format(
+                alarm["id"], label
+            )
+        )
+
     def android_cancel_ringing_notification():
         context = _activity().getApplicationContext()
         manager = cast(
@@ -437,6 +530,7 @@ if ANDROID:
             context.getSystemService(Context.NOTIFICATION_SERVICE),
         )
         manager.cancel(_RINGING_NOTIFICATION_ID)
+        print("[RedAlarm] ringing notification cancelled")
 
     def android_is_samsung():
         try:
@@ -664,11 +758,12 @@ def pick_ringtone_file(on_chosen, on_error):
 
 
 def resolve_ringtone_for_playback(raw_path, app_storage_dir):
-    """Resolve at actual playback time.
+    """Resolve Android content:// ringtone URIs into app-private files.
 
-    Android content:// values are copied to private storage with a real audio
-    extension. The previous implementation used '.audio', which could cause
-    SoundLoader to fail to select an audio decoder and appear as Silent.
+    SoundLoader selects its backend from the file extension; the older
+    implementation used a '.audio' suffix, which made a selected MP3 look
+    like a silent/unloadable sound. Resolve the URI at playback time and
+    preserve a real audio extension from the document name/MIME type.
     """
     if not raw_path:
         return None
@@ -684,8 +779,8 @@ def resolve_ringtone_for_playback(raw_path, app_storage_dir):
             name = ""
 
         ext = os.path.splitext(name)[1].lower()
-        valid = {".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"}
-        if ext not in valid:
+        allowed = {".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"}
+        if ext not in allowed:
             mime = android_get_mime_type(raw_path)
             ext = {
                 "audio/mpeg": ".mp3",
@@ -720,6 +815,7 @@ def resolve_ringtone_for_playback(raw_path, app_storage_dir):
             return None
 
     return raw_path
+
 
 
 # ======================================================================
@@ -1528,8 +1624,9 @@ class AlarmRingScreen(Screen):
         if ANDROID:
             try:
                 android_start_vibration(bool(alarm.get("vibrate", True)))
+                android_show_ringing_notification(alarm)
             except Exception as exc:
-                print("[RedAlarm] vibration error:", exc)
+                print("[RedAlarm] Android ring extras error:", exc)
 
         self._remaining_seconds = max(1, int(alarm.get("auto_dismiss_sec", 300) or 300))
         self._update_countdown_text()
