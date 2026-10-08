@@ -523,6 +523,26 @@
                             text_color: 1, 1, 1, 1
                             on_release: root.preview_sound()
 
+                # ---------- vibration ----------
+                BoxLayout:
+                    size_hint_y: None
+                    height: "46dp"
+                    spacing: "10dp"
+
+                    Label:
+                        text: "Vibrate"
+                        color: COL_TEXT
+                        font_size: "14.5sp"
+                        halign: "left"
+                        valign: "middle"
+                        text_size: self.size
+
+                    IOSToggle:
+                        active: root.vibrate
+                        size_hint_x: None
+                        pos_hint: {"center_y": 0.5}
+                        on_active: root.vibrate = self.active
+
                 # ---------- auto-dismiss + snooze (minutes + seconds) ----------
                 BoxLayout:
                     size_hint_y: None
