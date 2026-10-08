@@ -267,28 +267,7 @@ if ANDROID:
                 pass
             _wake_lock[0] = None
 
-    def android_show_over_lockscreen(show):
-        """Draw above the lock screen and turn the display on (or undo it).
-        This — not a 'display over other apps' permission — is the actual
-        mechanism alarm apps use; it needs no user-grantable permission."""
-        window = _activity().getWindow()
-        flags = (WindowManagerFlags.FLAG_SHOW_WHEN_LOCKED
-                | WindowManagerFlags.FLAG_TURN_SCREEN_ON
-                | WindowManagerFlags.FLAG_KEEP_SCREEN_ON
-                | WindowManagerFlags.FLAG_DISMISS_KEYGUARD)
-        if show:
-            window.addFlags(flags)
-            if Build.VERSION.SDK_INT >= 27:
-                _activity().setShowWhenLocked(True)
-                _activity().setTurnScreenOn(True)
-                keyguard = cast("android.app.KeyguardManager",
-                                _activity().getSystemService(Context.KEYGUARD_SERVICE))
-                keyguard.requestDismissKeyguard(_activity(), None)
-        else:
-            window.clearFlags(flags)
-            if Build.VERSION.SDK_INT >= 27:
-                _activity().setShowWhenLocked(False)
-                _activity().setTurnScreenOn(False)
+def android_show_over_lockscreen(show):
 
     def android_copy_content_uri_to_file(uri_string, dest_path):
         """Ringtone picks come back as content:// URIs; Kivy's audio
