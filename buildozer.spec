@@ -16,7 +16,7 @@ orientation = portrait
 
 # Native Android splash colour shown before Python even starts, so there
 # is no white flash - it matches the in-app RedAlarm splash.
-presplash.filename = %(source.dir)s/presplash.png
+presplash.filename = %(source.dir)s/presplash2.png
 android.presplash_color = #000000
 fullscreen = 0
 
