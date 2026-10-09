@@ -1831,34 +1831,7 @@ class RedAlarmApp(App):
         Clock.schedule_once(self._finish_startup, 0.1)
         return self._splash
 
-    def _build_splash(self):
-        splash = FloatLayout()
-        with splash.canvas.before:
-            Color(0.04, 0.04, 0.045, 1)
-            bg = Rectangle(pos=splash.pos, size=splash.size)
-            Color(0.30, 0.05, 0.06, 0.45)
-            glow = Ellipse(pos=(0, 0), size=(10, 10))
-
-        def _relayout(*_):
-            bg.pos, bg.size = splash.pos, splash.size
-            d = splash.width * 1.3
-            glow.size = (d, d)
-            glow.pos = (splash.center_x - d / 2, splash.center_y - d / 2)
-        splash.bind(pos=_relayout, size=_relayout)
-
-        splash.add_widget(Label(
-            text="[color=d11a21][b]RED[/b][/color] [b]ALARM[/b]",
-            markup=True, font_size="38sp", color=(0.96, 0.96, 0.96, 1),
-            pos_hint={"center_x": 0.5, "center_y": 0.54},
-            size_hint=(1, None), height=dp(60),
-        ))
-        splash.add_widget(Label(
-            text="getting your alarms ready...", font_size="13sp",
-            color=(0.62, 0.58, 0.58, 1),
-            pos_hint={"center_x": 0.5, "center_y": 0.47},
-            size_hint=(1, None), height=dp(24),
-        ))
-        return splash
+    
 
     def _finish_startup(self, dt):
         # ---- everything needed to show the real UI ----
