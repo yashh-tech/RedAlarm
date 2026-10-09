@@ -1833,7 +1833,7 @@ class RedAlarmApp(App):
         return self._splash
         
     def _build_splash(self):
-        return SplashScreen(duration=1.7)
+        return SplashScreen(duration=2.5)
     
 
     def _finish_startup(self, dt):
@@ -1888,7 +1888,7 @@ class RedAlarmApp(App):
         # Keep the splash visible for three seconds from app startup.
         remaining = max(
             0.0,
-            1.7 - (time.monotonic() - self._startup_started)
+            2.5 - (time.monotonic() - self._startup_started)
         )
         Clock.schedule_once(self._show_main_ui, remaining)
 
