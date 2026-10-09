@@ -66,22 +66,43 @@ class SplashScreen(FloatLayout):
         self.bind(pos=self.update_bg, size=self.update_bg)
 
         # Centered splash content
+               # Centered RedAlarm splash content
         content = BoxLayout(
             orientation="vertical",
-            spacing=dp(14),
-            size_hint=(0.82, 0.35),
+            spacing=dp(10),
+            size_hint=(0.86, None),
+            height=dp(315),
             pos_hint={
                 "center_x": 0.5,
                 "center_y": 0.5
             }
         )
 
+        # RedAlarm clock logo
+        logo_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "splashimage.png"
+        )
+
         content.add_widget(
-             Label(
-             text="[color=#FF1F29]Red[/color][color=#FFFFFF]Alarm[/color]",
-             markup=True,
-             font_size="34sp",
-             bold=True
+            Image(
+                source=logo_path,
+                size_hint=(1, None),
+                height=dp(150),
+                allow_stretch=True,
+                keep_ratio=True
+            )
+        )
+
+        # Large RedAlarm wordmark
+        content.add_widget(
+            Label(
+                text="[color=#FF1F29]Red[/color][color=#FFFFFF]Alarm[/color]",
+                markup=True,
+                font_size="44sp",
+                bold=True,
+                size_hint=(1, None),
+                height=dp(58)
             )
         )
 
@@ -89,7 +110,9 @@ class SplashScreen(FloatLayout):
             Label(
                 text="Your time. Your control.",
                 font_size="16sp",
-                color=(1, 1, 1, 1)
+                color=(1, 1, 1, 1),
+                size_hint=(1, None),
+                height=dp(28)
             )
         )
 
@@ -109,7 +132,6 @@ class SplashScreen(FloatLayout):
         content.add_widget(self.loading_text)
 
         self.add_widget(content)
-
         # Fill the bar over 3 seconds
         self._loading_event = Clock.schedule_interval(
             self.update_loading,
