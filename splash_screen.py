@@ -1,3 +1,4 @@
+import os
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -6,9 +7,9 @@ from kivy.properties import NumericProperty
 from kivy.graphics import Color, Rectangle
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.image import Image
 from kivy.uix.label import Label
 from kivy.uix.widget import Widget
-
 
 class LoadingBar(Widget):
     progress = NumericProperty(0)
