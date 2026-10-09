@@ -18,6 +18,8 @@ import uuid
 import hashlib
 import traceback
 import datetime
+import time
+
 
 from kivy.app import App
 from kivy.base import ExceptionHandler, ExceptionManager
@@ -30,6 +32,8 @@ from kivy.core.window import Window
 from kivy.graphics import Color, Ellipse, Line, Rectangle, RoundedRectangle
 from kivy.metrics import dp
 from kivy.utils import platform
+from kivy.uix.widget import Widget
+from splash_screen import SplashScreen
 from kivy.properties import (
     StringProperty,
     NumericProperty,
@@ -1802,12 +1806,9 @@ class RedAlarmApp(App):
     _queued_intents = None    # intents that arrive before _ready (replayed after)
 
     def build(self):
-        """Returns a tiny pure-Python splash IMMEDIATELY. The expensive part
-        (parsing the big alarm.kv, building every screen, loading alarms)
-        runs on the very next tick in _finish_startup(), so the user sees a
-        deliberate RedAlarm splash instead of a frozen blank window."""
         self.title = APP_TITLE
         self._queued_intents = []
+        self._startup_started = time.monotonic()
 
         # Cheap, and wanted before anything else can go wrong: log
         # uncaught exceptions to a file instead of dying silently.
@@ -1830,11 +1831,12 @@ class RedAlarmApp(App):
         self._splash = self._build_splash()
         Clock.schedule_once(self._finish_startup, 0.1)
         return self._splash
-
+        
+    def _build_splash(self):
+        return SplashScreen(duration=3)
     
 
     def _finish_startup(self, dt):
-        # ---- everything needed to show the real UI ----
         Builder.load_file("alarm.kv")
         self.store = AlarmStore(os.path.join(self.user_data_dir, "alarms.json"))
         self.ringtone_cache_dir = os.path.join(self.user_data_dir, "ringtones")
@@ -1850,8 +1852,7 @@ class RedAlarmApp(App):
         root.add_widget(AlarmRingScreen(name="ring"))
         root.current = "home"
 
-        Window.remove_widget(self._splash)
-        Window.add_widget(root)
+        self._pending_root = root
         self.root = root
         self._ready = True
 
@@ -1884,7 +1885,21 @@ class RedAlarmApp(App):
         for args in queued:
             self._dispatch_intent(*args)
 
-        # ---- non-essential: after the main UI is already on screen ----
+        # Keep the splash visible for three seconds from app startup.
+        remaining = max(
+            0.0,
+            3.0 - (time.monotonic() - self._startup_started)
+        )
+        Clock.schedule_once(self._show_main_ui, remaining)
+
+    def _show_main_ui(self, dt):
+        root = getattr(self, "_pending_root", None)
+        if root is None:
+            return
+
+        Window.remove_widget(self._splash)
+        Window.add_widget(root)
+
         Clock.schedule_once(self._maybe_show_samsung_prompt, 2.5)
 
     # ---- Samsung "Never sleeping apps" guidance (one-time / infrequent) ----
