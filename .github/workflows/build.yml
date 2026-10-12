@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - Latest_Update
+      - yashh-tech-patch-2
   workflow_dispatch:
 
 jobs:
