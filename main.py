@@ -200,22 +200,117 @@ if ANDROID:
         flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         return PendingIntent.getActivity(_activity(), request_code, intent, flags)
 
+    def _alarm_broadcast_pending_intent(
+        alarm_id, request_code, fire_token=None
+    ):
+        """Android delivers the scheduled alarm to the Java receiver."""
+        context = _activity().getApplicationContext()
+        Receiver = autoclass("org.kivy.android.KivyAlarmReceiver")
+
+        intent = Intent(context, Receiver)
+        intent.setAction("com.redalarm.FIRE_" + alarm_id)
+        intent.putExtra("alarm_id", JString(alarm_id))
+
+        if fire_token is not None:
+            intent.putExtra("fire_token", JString(str(fire_token)))
+
+        flags = (
+            PendingIntent.FLAG_UPDATE_CURRENT
+            | PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return PendingIntent.getBroadcast(
+            context, request_code, intent, flags
+        )
+
     def android_schedule_alarm(alarm_id, trigger_dt, salt=""):
+        # On Android 12+, do not call setAlarmClock without exact-alarm access.
+        if (
+            BuildVersion.SDK_INT >= 31
+            and not android_can_schedule_exact_alarms()
+        ):
+            print(
+                "[RedAlarm] Exact alarm access is missing; "
+                "open Alarms & reminders in Settings."
+            )
+            return False
+
         request_code = stable_request_code(alarm_id, salt)
         fire_token = int(trigger_dt.timestamp() * 1000)
-        pending_intent = _alarm_pending_intent(alarm_id, request_code, fire_token)
-        info = AlarmClockInfo(fire_token, pending_intent)
-        # setAlarmClock() fires exactly on time even through Doze, and the
-        # OS shows its own little alarm-clock glyph in the status bar.
-        _alarm_manager().setAlarmClock(info, pending_intent)
 
-    def android_cancel_alarm(alarm_id, salt=""):
+        try:
+            # Remove the legacy Activity PendingIntent from older app builds.
+            # This avoids an old scheduled entry competing with the receiver.
+            try:
+                legacy_pi = _alarm_pending_intent(
+                    alarm_id, request_code, fire_token
+                )
+                _alarm_manager().cancel(legacy_pi)
+            except Exception as exc:
+                print("[RedAlarm] legacy alarm cleanup:", exc)
+
+            # This is the actual alarm operation: send a broadcast to Java.
+            operation_pi = _alarm_broadcast_pending_intent(
+                alarm_id, request_code, fire_token
+            )
+
+            # The separate show intent is used if the user taps Android's
+            # alarm-clock indicator. It must launch an Activity, not a receiver.
+            context = _activity().getApplicationContext()
+            show_intent = Intent(context, PythonActivity)
+            show_intent.setAction("com.redalarm.SHOW_ALARMS")
+            show_intent.setFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                | Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+
+            flags = (
+                PendingIntent.FLAG_UPDATE_CURRENT
+                | PendingIntent.FLAG_IMMUTABLE
+            )
+
+            show_pi = PendingIntent.getActivity(
+                _activity(),
+                stable_request_code(alarm_id, "show"),
+                show_intent,
+                flags,
+            )
+
+            info = AlarmClockInfo(fire_token, show_pi)
+            _alarm_manager().setAlarmClock(info, operation_pi)
+
+            print(
+                "[RedAlarm] Alarm scheduled:",
+                alarm_id,
+                "at",
+                trigger_dt,
+            )
+            return True
+
+        except Exception as exc:
+            print("[RedAlarm] setAlarmClock failed:", repr(exc))
+            return False
+
+   def android_cancel_alarm(alarm_id, salt=""):
         request_code = stable_request_code(alarm_id, salt)
-        # Extras don't matter for cancellation — only action/component/
-        # request-code need to match the PendingIntent being cancelled.
-        pending_intent = _alarm_pending_intent(alarm_id, request_code)
-        _alarm_manager().cancel(pending_intent)
 
+        # Cancel alarms created by older builds that targeted PythonActivity.
+        try:
+            legacy_pi = _alarm_pending_intent(alarm_id, request_code)
+            _alarm_manager().cancel(legacy_pi)
+        except Exception as exc:
+            print("[RedAlarm] legacy alarm cancellation:", exc)
+
+        # Cancel the current receiver-based alarm.
+        try:
+            broadcast_pi = _alarm_broadcast_pending_intent(
+                alarm_id, request_code
+            )
+            _alarm_manager().cancel(broadcast_pi)
+        except Exception as exc:
+            print("[RedAlarm] receiver alarm cancellation:", exc)
+            
     def android_can_schedule_exact_alarms():
         try:
             return bool(_alarm_manager().canScheduleExactAlarms())
@@ -223,8 +318,17 @@ if ANDROID:
             return True  # API < 31: no such restriction exists
 
     def android_request_exact_alarm_permission():
+        # The special exact-alarm Settings page applies on Android 12+.
+        if BuildVersion.SDK_INT < 31:
+            return
+
+        if android_can_schedule_exact_alarms():
+            return
+
         intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-        intent.setData(Uri.parse("package:" + _activity().getPackageName()))
+        intent.setData(
+            Uri.parse("package:" + _activity().getPackageName())
+        )
         _activity().startActivity(intent)
 
     def android_is_ignoring_battery_optimizations():
