@@ -34,6 +34,7 @@ from kivy.metrics import dp
 from kivy.utils import platform
 from kivy.uix.widget import Widget
 from splash_screen import SplashScreen
+from notification import build_ringing_notification
 from kivy.properties import (
     StringProperty,
     NumericProperty,
@@ -467,37 +468,19 @@ if ANDROID:
 
     def android_show_ring_notification(alarm_id, title, text):
         context = _activity().getApplicationContext()
-        Notification = autoclass("android.app.Notification")
-        AndroidR_drawable = autoclass("android.R$drawable")
-
         tap_pending_intent = _alarm_pending_intent(
             alarm_id, stable_request_code(alarm_id, "ring_tap"),
             fire_token="tap" + str(int(datetime.datetime.now().timestamp() * 1000)),
         )
         dismiss_pi = _notification_action_pending_intent(alarm_id, "dismiss")
         snooze_pi = _notification_action_pending_intent(alarm_id, "snooze")
-
-        if BuildVersion.SDK_INT >= 26:
-            builder = autoclass("android.app.Notification$Builder")(context, JString(_RING_CHANNEL_ID))
-        else:
-            builder = autoclass("android.app.Notification$Builder")(context)
-            builder.setPriority(2)  # Notification.PRIORITY_MAX
-        builder.setContentTitle(JString(title))
-        builder.setContentText(JString(text))
-        builder.setSmallIcon(AndroidR_drawable.ic_lock_idle_alarm)
-        android_apply_notification_logo(builder)
-        builder.setCategory(Notification.CATEGORY_ALARM)
-        builder.setVisibility(Notification.VISIBILITY_PUBLIC)
-        builder.setFullScreenIntent(tap_pending_intent, True)
-        builder.setContentIntent(tap_pending_intent)
-        builder.addAction(AndroidR_drawable.ic_menu_close_clear_cancel, JString("Dismiss"), dismiss_pi)
-        builder.addAction(AndroidR_drawable.ic_popup_reminder, JString("Snooze"), snooze_pi)
-        builder.setOngoing(True)     # keep notification present while ringing
-        builder.setAutoCancel(False) # Dismiss removes it; tapping body does not
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "splashimage.png")
+        notification = build_ringing_notification(
+            context, title, text, tap_pending_intent, dismiss_pi, snooze_pi,
+            logo_path=logo_path, channel_id=_RING_CHANNEL_ID,
+        )
         manager = cast("android.app.NotificationManager",
-                        context.getSystemService(Context.NOTIFICATION_SERVICE))
-        notification = builder.build()
-        notification.flags = int(notification.flags) | int(Notification.FLAG_NO_CLEAR)
+                       context.getSystemService(Context.NOTIFICATION_SERVICE))
         manager.notify(_RING_NOTIF_ID, notification)
 
     def android_cancel_ring_notification():
@@ -520,7 +503,8 @@ if ANDROID:
             print("[RedAlarm] ring service file cleanup error:", exc)
 
     def android_start_ring_service(alarm_id, title, time_text, sound_path,
-                                   fallback_path, duration_sec, state_path):
+                                   fallback_path, duration_sec, state_path,
+                                   clip_start_ms=0, clip_duration_ms=0):
         """Start the independent foreground media player and persistent notification."""
         ServiceRing = autoclass("org.yashtech.redalarm.ServiceRing")
         service_duration = max(1, int(duration_sec or 300))
@@ -531,6 +515,8 @@ if ANDROID:
             "time_text": str(time_text or ""),
             "sound_path": str(sound_path or ""),
             "fallback_path": str(fallback_path or ""),
+            "clip_start_ms": max(0, int(clip_start_ms or 0)),
+            "clip_duration_ms": max(0, int(clip_duration_ms or 0)),
             "duration_sec": service_duration,
             "deadline_epoch": time.time() + service_duration,
             "state_path": service_state_path,
@@ -551,6 +537,39 @@ if ANDROID:
             JString("{} - {}".format(title or "Alarm", time_text or "")),
             JString(payload),
         )
+
+        # Wait for proof that the service-side MediaPlayer actually started.
+        # This prevents a successful Java start call from being mistaken for
+        # successful audio playback. The UI falls back if startup fails.
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            try:
+                with open(service_state_path, "r", encoding="utf-8") as state_file:
+                    service_state = json.load(state_file)
+                if str(service_state.get("alarm_id") or "") == str(alarm_id):
+                    reason = service_state.get("reason")
+                    if reason in ("started", "error", "auto"):
+                        try:
+                            os.remove(service_state_path)
+                        except Exception:
+                            pass
+                        if reason == "started":
+                            return
+                        raise RuntimeError("Foreground ring service reported {}".format(reason))
+            except FileNotFoundError:
+                pass
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                print("[RedAlarm] waiting for service startup confirmation:", exc)
+            time.sleep(0.1)
+
+        try:
+            ServiceRing.stop(_activity().getApplicationContext())
+        except Exception:
+            pass
+        android_cleanup_ring_service_files()
+        raise RuntimeError("Foreground ring service did not confirm that audio started within 5 seconds")
 
     def android_stop_ring_service():
         """Stop the independent audio player and its foreground notification."""
@@ -1467,7 +1486,12 @@ class AlarmEditScreen(Screen):
     sound_path = StringProperty("")
     sound_name = StringProperty("No sound chosen")
     vibrate = BooleanProperty(False)
+    clip_start_sec = NumericProperty(0)
+    clip_max_sec = NumericProperty(150)
+    clip_start_label = StringProperty("Starts at 00:00 · 30-second section repeats")
     _auto_picker_pending = False
+    _preview_sound = None
+    _preview_event = None
 
     def on_enter(self, *args):
         # "Add New Alarm" opens straight into the HOUR -> MINUTES -> AM/PM
@@ -1499,6 +1523,9 @@ class AlarmEditScreen(Screen):
             self.days_selected = [False] * 7
             self.sound_path = ""
             self.sound_name = "Default beep (tap to change)"
+            self.clip_start_sec = 0
+            self.clip_max_sec = 150
+            self._update_clip_label()
             self.vibrate = False
             ids.dismiss_min.text = "5"
             ids.dismiss_sec.text = "0"
@@ -1520,6 +1547,8 @@ class AlarmEditScreen(Screen):
             self.days_selected = list(alarm.get("days") or [False] * 7)
             self.sound_path = alarm.get("sound_path", "")
             self.sound_name = alarm.get("sound_name") or "Default beep"
+            self.clip_start_sec = max(0, float(alarm.get("clip_start_ms", 0) or 0) / 1000.0)
+            self._refresh_clip_range(self.sound_path)
             self.vibrate = bool(alarm.get("vibrate", False))
             dismiss_sec = int(alarm.get("auto_dismiss_sec", 300))
             ids.dismiss_min.text = str(dismiss_sec // 60)
@@ -1617,12 +1646,64 @@ class AlarmEditScreen(Screen):
             self.sound_path = path
 
         self.sound_name = name or os.path.basename(path.replace("\\", "/"))
+        self.clip_start_sec = 0
+        self._refresh_clip_range(self.sound_path)
+
+    def _update_clip_label(self):
+        start = max(0, int(float(self.clip_start_sec or 0)))
+        minutes, seconds = divmod(start, 60)
+        self.clip_start_label = "Song section starts at {:02d}:{:02d} · 30-second loop".format(minutes, seconds)
+
+    def set_clip_start(self, value):
+        try:
+            upper = max(0.0, float(self.clip_max_sec or 0))
+            self.clip_start_sec = min(upper, max(0.0, float(value or 0)))
+        except (TypeError, ValueError):
+            self.clip_start_sec = 0
+        self._update_clip_label()
+
+    def _refresh_clip_range(self, path):
+        duration = 180.0
+        sound = None
+        try:
+            sound = SoundLoader.load(path) if path else None
+            if sound is not None:
+                length = float(getattr(sound, "length", 0) or 0)
+                if length > 0:
+                    duration = length
+        except Exception as exc:
+            print("[RedAlarm] could not inspect selected song duration:", exc)
+        finally:
+            if sound is not None:
+                try:
+                    sound.stop()
+                    sound.unload()
+                except Exception:
+                    pass
+        # Keep the slider usable when a backend cannot report track duration;
+        # for ordinary three-minute tracks the range ends at duration - 30 sec.
+        self.clip_max_sec = min(600.0, max(0.0, duration - 30.0))
+        self.set_clip_start(min(self.clip_start_sec, self.clip_max_sec))
+
+    def _stop_preview(self, *args):
+        event, self._preview_event = self._preview_event, None
+        if event is not None:
+            try:
+                event.cancel()
+            except Exception:
+                pass
+        sound, self._preview_sound = self._preview_sound, None
+        if sound is not None:
+            try:
+                sound.stop()
+                sound.unload()
+            except Exception:
+                pass
 
     def preview_sound(self):
-        """Plays the chosen (or default) sound for ~2.5s, completely outside
-        the alarm-firing pipeline — the fastest way to tell whether audio
-        works on this machine at all, separate from scheduling."""
+        """Preview the selected 30-second region; alarms loop this region."""
         self.ids.error_label.text = ""
+        self._stop_preview()
         app = App.get_running_app()
         path = self.sound_path or app.default_ringtone_path
         try:
@@ -1631,12 +1712,26 @@ class AlarmEditScreen(Screen):
             self.ids.error_label.text = "Preview failed: {}".format(exc)
             return
         if sound is None:
-            self.ids.error_label.text = (
-                "Couldn't load that sound on this machine's audio backend."
-            )
+            self.ids.error_label.text = "Couldn't load that sound on this machine's audio backend."
             return
-        sound.play()
-        Clock.schedule_once(lambda dt: sound.stop(), 2.5)
+        is_default = (not self.sound_path) or (str(self.sound_name).lower().startswith("default beep"))
+        try:
+            sound.loop = is_default
+            start = 0.0 if is_default else max(0.0, float(self.clip_start_sec or 0))
+            length = float(getattr(sound, "length", 0) or 0)
+            if length > 0 and start >= length:
+                start = max(0.0, length - 1.0)
+            if not is_default:
+                sound.seek(start)
+            sound.play()
+            self._preview_sound = sound
+            play_for = 2.5 if is_default else 30.0
+            if not is_default and length > start:
+                play_for = max(0.5, min(30.0, length - start))
+            self._preview_event = Clock.schedule_once(self._stop_preview, play_for)
+        except Exception as exc:
+            self._stop_preview()
+            self.ids.error_label.text = "Preview seek failed: {}".format(exc)
 
     def cancel_edit(self):
         App.get_running_app().root.current = "list"
@@ -1695,6 +1790,9 @@ class AlarmEditScreen(Screen):
         # so a missing/failed file picker can never block saving an alarm.
         sound_path = self.sound_path or app.default_ringtone_path
         sound_name = self.sound_name if self.sound_path else "Default beep"
+        is_default_sound = (not self.sound_path) or sound_name.lower().startswith("default beep")
+        clip_start_ms = 0 if is_default_sound else int(max(0, self.clip_start_sec) * 1000)
+        clip_duration_ms = 0 if is_default_sound else 30000
         alarm.update({
             "id": self.editing_id or new_alarm_id(),
             "hour": hour,
@@ -1703,6 +1801,8 @@ class AlarmEditScreen(Screen):
             "label": ids.label_input.text.strip(),
             "sound_path": sound_path,
             "sound_name": sound_name,
+            "clip_start_ms": clip_start_ms,
+            "clip_duration_ms": clip_duration_ms,
             "auto_dismiss_sec": total_dismiss,
             "snooze_sec": total_snooze,
             "vibrate": self.vibrate,
@@ -1732,6 +1832,8 @@ class AlarmRingScreen(Screen):
         self._ring_session = 0
         self._keep_snooze_notification = False
         self._android_service_active = False
+        self._clip_loop_event = None
+        self._ring_deadline = None
 
     def on_leave(self, *args):
         # Safety net: whichever way we leave this screen, sound + timer stop.
@@ -1778,7 +1880,11 @@ class AlarmRingScreen(Screen):
             path = app.default_ringtone_path
 
         ring_duration = max(1, int(alarm.get("auto_dismiss_sec", 300) or 300))
+        self._ring_deadline = time.time() + ring_duration
         self._remaining_seconds = ring_duration
+        is_default_sound = str(alarm.get("sound_name") or "").lower().startswith("default beep")
+        clip_start_ms = 0 if is_default_sound else max(0, int(alarm.get("clip_start_ms", 0) or 0))
+        clip_duration_ms = 0 if is_default_sound else max(0, int(alarm.get("clip_duration_ms", 0) or 30000))
         service_started = False
 
         if ANDROID and path and os.path.exists(path):
@@ -1787,6 +1893,7 @@ class AlarmRingScreen(Screen):
                     alarm["id"], self.label_text, self.time_text, path,
                     app.default_ringtone_path, ring_duration,
                     os.path.join(app.user_data_dir, "ring_service_state.json"),
+                    clip_start_ms, clip_duration_ms,
                 )
                 service_started = True
                 self._android_service_active = True
@@ -1802,22 +1909,9 @@ class AlarmRingScreen(Screen):
                     print("[RedAlarm] fallback notification error:", notif_exc)
 
         if path and not service_started:
-            try:
-                sound = SoundLoader.load(path)
-                if sound is not None:
-                    sound.loop = True
-                    sound.play()
-                    self._sound = sound
-                    print("[RedAlarm] ring: playback started:", path)
-                else:
-                    print("[RedAlarm] ring: SoundLoader returned None for", path)
-                    if path != app.default_ringtone_path:
-                        self._sound = self._try_load_and_play(app.default_ringtone_path)
-            except Exception as exc:
-                print("[RedAlarm] ring: sound error:", exc)
-                self._sound = None
-                if path != app.default_ringtone_path:
-                    self._sound = self._try_load_and_play(app.default_ringtone_path)
+            self._sound = self._try_load_and_play(path, clip_start_ms, clip_duration_ms)
+            if self._sound is None and path != app.default_ringtone_path:
+                self._sound = self._try_load_and_play(app.default_ringtone_path)
         elif not path:
             print("[RedAlarm] ring: no sound path available at all (not even default)")
 
@@ -1830,22 +1924,63 @@ class AlarmRingScreen(Screen):
             lambda dt: self._tick_countdown(dt, session), 1
         )
 
-    def _try_load_and_play(self, path):
-        """Last-resort fallback load, used when the chosen ringtone fails —
-        returns the playing Sound object, or None if even this fails."""
+    def _try_load_and_play(self, path, start_ms=0, clip_duration_ms=0):
+        """Play a saved ringtone; custom songs use a looped 30-second region."""
         if not path:
             return None
+        sound = None
         try:
             sound = SoundLoader.load(path)
-            if sound is not None:
+            if sound is None:
+                print("[RedAlarm] ring: SoundLoader returned None for", path)
+                return None
+            clip_ms = max(0, int(clip_duration_ms or 0))
+            start_sec = max(0.0, float(start_ms or 0) / 1000.0)
+            length = float(getattr(sound, "length", 0) or 0)
+            if clip_ms > 0:
+                if length > 0:
+                    start_sec = min(start_sec, max(0.0, length - 0.1))
+                    clip_sec = max(0.5, min(clip_ms / 1000.0, length - start_sec))
+                else:
+                    clip_sec = clip_ms / 1000.0
+                sound.loop = False
+                sound.seek(start_sec)
+            else:
+                clip_sec = 0
                 sound.loop = True
-                sound.play()
-                print("[RedAlarm] ring: fallback playback started:", path)
-                return sound
-            print("[RedAlarm] ring: fallback SoundLoader also returned None")
+            sound.play()
+            if clip_sec > 0:
+                if self._clip_loop_event is not None:
+                    self._clip_loop_event.cancel()
+                self._clip_loop_event = Clock.schedule_interval(
+                    lambda dt, snd=sound, pos=start_sec: self._repeat_sound_segment(snd, pos),
+                    clip_sec,
+                )
+            print("[RedAlarm] ring: playback started:", path, "segment_start_sec=", start_sec, "clip_sec=", clip_sec)
+            return sound
         except Exception as exc:
-            print("[RedAlarm] ring: fallback sound error:", exc)
-        return None
+            print("[RedAlarm] ring: playback/seek failed for", path, exc)
+            if sound is not None:
+                try:
+                    sound.stop()
+                    sound.unload()
+                except Exception:
+                    pass
+            return None
+
+    def _repeat_sound_segment(self, sound, start_sec):
+        if not self._ringing or self._sound is not sound:
+            self._clip_loop_event = None
+            return False
+        try:
+            sound.stop()
+            sound.seek(start_sec)
+            sound.play()
+            return True
+        except Exception as exc:
+            print("[RedAlarm] segment repeat failed:", exc)
+            self._clip_loop_event = None
+            return False
 
     def _tick_countdown(self, dt, session):
         if not self._ringing or session != self._ring_session:
@@ -1857,7 +1992,10 @@ class AlarmRingScreen(Screen):
                 print("[RedAlarm] ring service completion poll error:", exc)
             if not self._ringing or session != self._ring_session:
                 return False
-        self._remaining_seconds = max(0, self._remaining_seconds - 1)
+        if self._ring_deadline is not None:
+            self._remaining_seconds = max(0, int(math.ceil(self._ring_deadline - time.time())))
+        else:
+            self._remaining_seconds = max(0, self._remaining_seconds - 1)
         self._update_countdown_text()
         if self._remaining_seconds <= 0:
             self.finish(reason="auto")
@@ -1870,11 +2008,18 @@ class AlarmRingScreen(Screen):
 
     def _stop_common(self, cancel_notification=True):
         self._ringing = False
+        self._ring_deadline = None
         self._ring_session += 1              # invalidates any queued tick
 
         event, self._countdown_event = self._countdown_event, None
         if event is not None:
             event.cancel()
+        clip_event, self._clip_loop_event = self._clip_loop_event, None
+        if clip_event is not None:
+            try:
+                clip_event.cancel()
+            except Exception:
+                pass
 
         sound, self._sound = self._sound, None
         if sound is not None:

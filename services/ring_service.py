@@ -11,9 +11,10 @@ import time
 import traceback
 
 from jnius import autoclass
+from notification import build_ringing_notification, RING_CHANNEL_ID
 
 SERVICE_NOTIFICATION_ID = 1
-SERVICE_CHANNEL_ID = "redalarm_service_ringing_v1"
+SERVICE_CHANNEL_ID = RING_CHANNEL_ID
 
 
 def _stable_request_code(alarm_id, salt=""):
@@ -66,85 +67,27 @@ def _make_pending_intent(context, alarm_id, kind=None):
 
 
 def _make_alarm_notification(service, config):
-    Notification = autoclass("android.app.Notification")
-    NotificationManager = autoclass("android.app.NotificationManager")
-    NotificationChannel = autoclass("android.app.NotificationChannel")
-    AndroidR_drawable = autoclass("android.R$drawable")
-    BuildVersion = autoclass("android.os.Build$VERSION")
-    JString = autoclass("java.lang.String")
-
+    """Use the same shared notification builder as the main app process."""
     context = service.getApplicationContext()
-    manager = service.getSystemService(JString("notification"))
-    if BuildVersion.SDK_INT >= 26:
-        channel = NotificationChannel(
-            JString(SERVICE_CHANNEL_ID), JString("Alarm ringing"),
-            NotificationManager.IMPORTANCE_HIGH,
-        )
-        channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC)
-        channel.enableVibration(False)  # alarm vibration is handled by RedAlarm
-        try:
-            channel.setSound(None, None)  # the looping alarm audio is played by MediaPlayer
-        except Exception:
-            pass
-        manager.createNotificationChannel(channel)
-        builder = autoclass("android.app.Notification$Builder")(
-            context, JString(SERVICE_CHANNEL_ID)
-        )
-    else:
-        builder = autoclass("android.app.Notification$Builder")(context)
-        builder.setPriority(2)  # PRIORITY_MAX
-
     alarm_id = str(config.get("alarm_id") or "")
     title = str(config.get("title") or "Alarm")
     time_text = str(config.get("time_text") or "")
     content_intent = _make_pending_intent(context, alarm_id)
     dismiss_intent = _make_pending_intent(context, alarm_id, "dismiss")
     snooze_intent = _make_pending_intent(context, alarm_id, "snooze")
-
-    builder.setContentTitle(JString(title))
-    builder.setContentText(JString(time_text))
-    builder.setSmallIcon(AndroidR_drawable.ic_lock_idle_alarm)
-    builder.setCategory(Notification.CATEGORY_ALARM)
-    builder.setVisibility(Notification.VISIBILITY_PUBLIC)
-    builder.setContentIntent(content_intent)
-    builder.setFullScreenIntent(content_intent, True)
-    builder.addAction(
-        AndroidR_drawable.ic_menu_close_clear_cancel, JString("Dismiss"), dismiss_intent
+    AndroidR_drawable = autoclass("android.R$drawable")
+    logo_path = str(config.get("logo_path") or "")
+    if not logo_path or not os.path.isfile(logo_path):
+        app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        logo_path = os.path.join(app_root, "splashimage.png")
+    return build_ringing_notification(
+        context, title, time_text, content_intent, dismiss_intent, snooze_intent,
+        logo_path=logo_path, channel_id=SERVICE_CHANNEL_ID,
+        small_icon=AndroidR_drawable.ic_lock_idle_alarm,
     )
-    builder.addAction(
-        AndroidR_drawable.ic_popup_reminder, JString("Snooze"), snooze_intent
-    )
-    builder.setOngoing(True)
-    builder.setAutoCancel(False)
-    builder.setOnlyAlertOnce(True)
-
-    # Use the full-color RedAlarm logo as the notification's large icon.
-    try:
-        logo_path = str(config.get("logo_path") or "")
-        if not logo_path or not os.path.isfile(logo_path):
-            app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            logo_path = os.path.join(app_root, "splashimage.png")
-        if os.path.isfile(logo_path):
-            BitmapFactory = autoclass("android.graphics.BitmapFactory")
-            Options = autoclass("android.graphics.BitmapFactory$Options")
-            options = Options()
-            options.inSampleSize = 8
-            logo = BitmapFactory.decodeFile(JString(logo_path), options)
-            if logo is not None:
-                builder.setLargeIcon(logo)
-    except Exception:
-        pass
-
-    notification = builder.build()
-    notification.flags = (
-        int(notification.flags)
-        | int(Notification.FLAG_NO_CLEAR)
-        | int(Notification.FLAG_ONGOING_EVENT)
-    )
-    return notification
 
 
-def _new_player(context, path):
+def _new_player(context, path, clip_start_ms=0, clip_duration_ms=0):
     MediaPlayer = autoclass("android.media.MediaPlayer")
     AudioAttributes = autoclass("android.media.AudioAttributes")
     PowerManager = autoclass("android.os.PowerManager")
@@ -161,10 +104,24 @@ def _new_player(context, path):
         player.setAudioAttributes(attributes)
         player.setWakeMode(context, PowerManager.PARTIAL_WAKE_LOCK)
         player.setDataSource(JString(path))
-        player.setLooping(True)
         player.prepare()
+        duration = max(0, int(player.getDuration()))
+        clip_ms = max(0, int(clip_duration_ms or 0))
+        start_ms = max(0, int(clip_start_ms or 0))
+        if duration > 0:
+            start_ms = min(start_ms, max(0, duration - 1))
+        else:
+            start_ms = 0
+        if clip_ms > 0 and duration > start_ms:
+            clip_ms = min(clip_ms, duration - start_ms)
+        else:
+            clip_ms = 0
+        # No crop means the default beep (or a legacy tone) loops as a whole file.
+        player.setLooping(clip_ms <= 0)
+        if clip_ms > 0:
+            player.seekTo(start_ms)
         player.start()
-        return player
+        return player, start_ms, (start_ms + clip_ms if clip_ms > 0 else 0)
     except Exception:
         try:
             player.release()
@@ -211,6 +168,8 @@ def main():
     duration = max(1, int(config.get("duration_sec") or 300))
     deadline_epoch = float(config.get("deadline_epoch") or (time.time() + duration))
     player = None
+    clip_start_position_ms = 0
+    clip_end_position_ms = 0
     timed_out = False
 
     try:
@@ -219,13 +178,24 @@ def main():
         service.startForeground(SERVICE_NOTIFICATION_ID, notification)
 
         context = service.getApplicationContext()
-        candidates = [str(config.get("sound_path") or ""), str(config.get("fallback_path") or "")]
+        custom_path = str(config.get("sound_path") or "")
+        fallback_path = str(config.get("fallback_path") or "")
+        configured_start = max(0, int(config.get("clip_start_ms") or 0))
+        configured_clip = max(0, int(config.get("clip_duration_ms") or 0))
+        candidates = [
+            (custom_path, configured_start, configured_clip),
+            (fallback_path, 0, 0),
+        ]
         last_error = None
-        for path in candidates:
+        for path, start_ms, clip_ms in candidates:
             if path and os.path.isfile(path):
                 try:
-                    player = _new_player(context, path)
-                    print("[RedAlarm service] playing alarm audio:", path)
+                    player, clip_start_position_ms, clip_end_position_ms = _new_player(
+                        context, path, start_ms, clip_ms
+                    )
+                    print("[RedAlarm service] playing:", path,
+                          "segment_start_ms=", clip_start_position_ms,
+                          "segment_end_ms=", clip_end_position_ms)
                     break
                 except Exception as exc:
                     last_error = exc
@@ -233,9 +203,24 @@ def main():
         if player is None:
             raise RuntimeError("No ringtone could be played: {}".format(last_error))
 
-        # Preserve the original timeout if Android restarts the sticky service.
+        # Signal only after MediaPlayer.prepare/start succeeded; main.py waits
+        # for this marker instead of assuming ServiceRing.start means audio began.
+        _write_state(state_path, alarm_id, "started")
+
+        # Keep the configured auto-dismiss deadline, but loop only the chosen
+        # 30-second song region. The service owns this loop even if the Activity
+        # pauses or is backgrounded.
         while time.time() < deadline_epoch:
-            time.sleep(0.25)
+            if clip_end_position_ms > clip_start_position_ms:
+                try:
+                    current_position = int(player.getCurrentPosition())
+                    if current_position >= clip_end_position_ms or not player.isPlaying():
+                        player.seekTo(clip_start_position_ms)
+                        player.start()
+                        time.sleep(0.08)
+                except Exception as exc:
+                    print("[RedAlarm service] clip loop seek failed:", exc)
+            time.sleep(0.12)
         timed_out = True
         _write_state(state_path, alarm_id, "auto")
         try:
