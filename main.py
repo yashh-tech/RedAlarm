@@ -2282,13 +2282,12 @@ class RedAlarmApp(App):
             self.default_ringtone_path = ensure_default_ringtone(self.ringtone_cache_dir)
         if ANDROID:
             try:
-                android_ensure_ring_channel()
+                self._exact_alarm_access_missing = (
+                    not android_can_schedule_exact_alarms()
+                )
             except Exception as exc:
-                print("[RedAlarm] notification channel error:", exc)
-            try:
-                android_request_runtime_permissions()
-            except Exception as exc:
-                print("[RedAlarm] permission request error:", exc)
+                print("[RedAlarm] exact-alarm permission check:", exc)
+                self._exact_alarm_access_missing = True
 
         for alarm in self.store.all():
             if alarm.get("enabled", True):
@@ -2420,6 +2419,31 @@ class RedAlarmApp(App):
         # case: phone locked overnight, app never force-closed.
         if not self._ready:
             return
+
+                # Re-arm saved alarms after exact-alarm access is granted.
+        if ANDROID:
+            try:
+                exact_ok = android_can_schedule_exact_alarms()
+
+                if (
+                    getattr(self, "_exact_alarm_access_missing", False)
+                    and exact_ok
+                ):
+                    for alarm in self.store.all():
+                        if alarm.get("enabled", True):
+                            try:
+                                self.scheduler.schedule(alarm)
+                            except Exception as exc:
+                                print(
+                                    "[RedAlarm] alarm reschedule failed:",
+                                    alarm.get("id"),
+                                    repr(exc),
+                                )
+
+                self._exact_alarm_access_missing = not exact_ok
+
+            except Exception as exc:
+                print("[RedAlarm] exact-alarm resume check:", exc)
         self._check_ring_service_completion()
         self._check_incoming_alarm()
         if self.root.current == "list":
