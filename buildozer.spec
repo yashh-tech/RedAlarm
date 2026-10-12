@@ -42,8 +42,7 @@ android.archs = arm64-v8a
 #                                    skins (MIUI/ColorOS/etc.) want this
 #                                    granted before they'll let a
 #                                    backgrounded app pop an activity
-android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,POST_NOTIFICATIONS,SYSTEM_ALERT_WINDOW,VIBRATE,USE_FULL_SCREEN_INTENT,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PLAYBACK
-
+android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,POST_NOTIFICATIONS,SYSTEM_ALERT_WINDOW,USE_FULL_SCREEN_INTENT,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PLAYBACK
 # CRITICAL for alarms: without this, Android stacks a new copy of the
 # activity on top every time AlarmManager fires while the app is already
 # open, instead of reusing the one instance and routing it through
