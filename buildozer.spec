@@ -42,9 +42,9 @@ android.archs = arm64-v8a
 #                                    skins (MIUI/ColorOS/etc.) want this
 #                                    granted before they'll let a
 #                                    backgrounded app pop an activity
-android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,POST_NOTIFICATIONS,SYSTEM_ALERT_WINDOW,USE_FULL_SCREEN_INTENT,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PLAYBACK
+android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,POST_NOTIFICATIONS,SYSTEM_ALERT_WINDOW,USE_FULL_SCREEN_INTENT,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PLAYBACK,RECEIVE_BOOT_COMPLETED,VIBRATE
 android.add_src = java_src
-android.extra_manifest_application_arguments = java_src/manifest_receiver_snippet.xml
+p4a.hook = java_src/manifest_hook.py
 android.manifest.launch_mode = singleTask
 
 android.accept_sdk_license = True
