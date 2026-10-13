@@ -292,7 +292,7 @@ if ANDROID:
             print("[RedAlarm] setAlarmClock failed:", repr(exc))
             return False
 
-   def android_cancel_alarm(alarm_id, salt=""):
+    def android_cancel_alarm(alarm_id, salt=""):
         request_code = stable_request_code(alarm_id, salt)
 
         # Cancel alarms created by older builds that targeted PythonActivity.
