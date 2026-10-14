@@ -11,7 +11,6 @@ version = 1.0.0
 
 # Keep this minimal. Do not add charset-normalizer.
 requirements = python3==3.11.6,hostpython3==3.11.6,kivy==2.3.1,plyer,filetype
-services = ring:services/ring_service.py:foreground:sticky:foregroundServiceType=mediaPlayback
 
 orientation = portrait
 
@@ -42,13 +41,20 @@ android.archs = arm64-v8a
 #                                    skins (MIUI/ColorOS/etc.) want this
 #                                    granted before they'll let a
 #                                    backgrounded app pop an activity
-android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,POST_NOTIFICATIONS,SYSTEM_ALERT_WINDOW,VIBRATE,USE_FULL_SCREEN_INTENT,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PLAYBACK
+android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,POST_NOTIFICATIONS,SYSTEM_ALERT_WINDOW,VIBRATE,USE_FULL_SCREEN_INTENT,RECEIVE_BOOT_COMPLETED
 
 # CRITICAL for alarms: without this, Android stacks a new copy of the
 # activity on top every time AlarmManager fires while the app is already
 # open, instead of reusing the one instance and routing it through
 # onNewIntent (which is what main.py's android.activity.bind hook needs).
 android.manifest.launch_mode = singleTask
+
+# Lock-screen alarm: a tiny Application class (android_src/...) sets
+# showWhenLocked + turnScreenOn on every activity at creation time, and the
+# manifest <application> tag is pointed at it. See RedAlarmApplication.java.
+android.add_src = java_src,android_src
+p4a.hook = java_src/manifest_hook.py
+android.extra_manifest_application_arguments = ./extra_manifest_application_arguments.xml
 
 android.accept_sdk_license = True
 
