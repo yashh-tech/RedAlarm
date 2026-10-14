@@ -1,6 +1,7 @@
 [app]
 
 title = RedAlarm
+icon.filename = %(source.dir)s/redalarm_icon.png
 package.name = redalarm
 package.domain = org.yashtech
 
