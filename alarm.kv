@@ -545,30 +545,6 @@
                             text_color: 1, 1, 1, 1
                             on_release: root.preview_sound()
 
-                # ---------- custom song section (fixed 30-second loop) ----------
-                BoxLayout:
-                    orientation: "vertical"
-                    size_hint_y: None
-                    height: "82dp"
-                    spacing: "4dp"
-
-                    Label:
-                        text: root.clip_start_label
-                        color: COL_SUBTEXT
-                        font_size: "12sp"
-                        size_hint_y: None
-                        height: "20dp"
-                        halign: "left"
-                        text_size: self.size
-
-                    Slider:
-                        id: clip_start_slider
-                        min: 0
-                        max: max(root.clip_max_sec, 1)
-                        value: root.clip_start_sec
-                        step: 1
-                        on_value: root.set_clip_start(self.value)
-
                 # ---------- vibration ----------
                 BoxLayout:
                     size_hint_y: None
