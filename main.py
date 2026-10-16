@@ -173,9 +173,28 @@ if ANDROID:
     WindowManagerFlags = autoclass("android.view.WindowManager$LayoutParams")
     KeyguardManager = autoclass("android.app.KeyguardManager")
     JString = autoclass("java.lang.String")
+    Toast = autoclass("android.widget.Toast")
+    Gravity = autoclass("android.view.Gravity")
 
     def _activity():
         return PythonActivity.mActivity
+
+    @run_on_ui_thread
+    def android_show_toast(message):
+        """Show the OS-managed Android toast, not an app-drawn overlay."""
+        try:
+            toast = Toast.makeText(
+                _activity().getApplicationContext(), JString(str(message)), Toast.LENGTH_LONG
+            )
+            # Android 10 and older honour this. Newer Android versions may
+            # choose their own position for standard text toasts.
+            try:
+                toast.setGravity(Gravity.CENTER, 0, 0)
+            except Exception:
+                pass
+            toast.show()
+        except Exception as exc:
+            print("[RedAlarm] native Android toast failed:", exc)
 
     def _alarm_manager():
         return cast("android.app.AlarmManager",
@@ -1244,44 +1263,6 @@ class HomeScreen(Screen):
     def go_alarms(self):
         App.get_running_app().root.current = "list"
 
-    def show_toast(self, message):
-        """Display a crisp, animated toast over the home clock."""
-        previous = getattr(self, "_toast_widget", None)
-        if previous is not None and previous.parent is self:
-            self.remove_widget(previous)
-        toast_width = max(dp(230), min(self.width - dp(32), dp(350)))
-        toast = BoxLayout(orientation="horizontal", size_hint=(None, None),
-                          size=(toast_width, dp(54)), padding=(dp(14), dp(7)))
-        toast.pos = (self.center_x - toast_width / 2, dp(28))
-        toast.opacity = 0
-        with toast.canvas.before:
-            Color(rgba=(0.075, 0.060, 0.064, 1))
-            toast_bg = RoundedRectangle(pos=toast.pos, size=toast.size, radius=[dp(18)])
-            Color(rgba=(0.6118, 0.0471, 0.0471, 1))
-            toast_border = Line(rounded_rectangle=(toast.x, toast.y, toast.width, toast.height, dp(18)), width=dp(1.0))
-        def sync_toast(*_):
-            toast_bg.pos, toast_bg.size = toast.pos, toast.size
-            toast_border.rounded_rectangle = (toast.x, toast.y, toast.width, toast.height, dp(18))
-        toast.bind(pos=sync_toast, size=sync_toast)
-        label = Label(text=message, color=(0.98, 0.98, 0.99, 1), font_size="12.5sp",
-                      bold=True, halign="center", valign="middle")
-        label.bind(size=lambda w, v: setattr(w, "text_size", (w.width, None)))
-        toast.add_widget(label)
-        self.add_widget(toast)
-        self._toast_widget = toast
-        Animation(opacity=1, duration=0.18, t="out_quad").start(toast)
-
-        def fade(_dt):
-            animation = Animation(opacity=0, duration=0.28, t="in_quad")
-            def remove_toast(*_):
-                if toast.parent is self:
-                    self.remove_widget(toast)
-                if getattr(self, "_toast_widget", None) is toast:
-                    self._toast_widget = None
-            animation.bind(on_complete=remove_toast)
-            animation.start(toast)
-        Clock.schedule_once(fade, 3.2)
-
     def go_new_alarm(self):
         app = App.get_running_app()
 
@@ -1580,7 +1561,7 @@ class AlarmEditScreen(Screen):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.time_state = {"hour": 7, "minute": 16, "ampm": "AM", "label": ""}
+        self.time_state = {"hour": 7, "minute": 16, "ampm": "AM", "label": "Alarm"}
         self._return_screen = "home"
         self.ui = AlarmEditorUI(self, size_hint=(1, 1), pos=self.pos)
         self.add_widget(self.ui)
@@ -1591,6 +1572,24 @@ class AlarmEditScreen(Screen):
         # Time picker is now an inline page, not the legacy button-grid popup.
         if self.ui.current != "picker":
             self.ui.show_picker()
+
+    def handle_hardware_back(self):
+        """Handle Android Back inside the editor instead of exiting the app."""
+        confirmation = getattr(self, "_confirmation_popup", None)
+        if confirmation is not None and getattr(confirmation, "is_open", False):
+            confirmation.dismiss()
+            self._confirmation_popup = None
+            App.get_running_app().root.current = "list"
+            return True
+        if self.ui.current == "settings":
+            self.ui.show_picker()
+            return True
+        # First dismiss the soft keyboard; the next Back leaves the editor.
+        if getattr(self.label_input, "focus", False):
+            self.label_input.focus = False
+            return True
+        self.cancel_edit()
+        return True
 
     def load_alarm(self, alarm_id):
         """Load defaults or an existing record and reset the editor to page 1."""
@@ -1609,7 +1608,7 @@ class AlarmEditScreen(Screen):
                 "hour": hour12,
                 "minute": now.minute,
                 "ampm": "PM" if now.hour >= 12 else "AM",
-                "label": "",
+                "label": "Alarm",
             })
             self.days_selected = [False] * 7
             self.sound_path = ""
@@ -1628,7 +1627,7 @@ class AlarmEditScreen(Screen):
                 "hour": hour24 % 12 or 12,
                 "minute": int(alarm.get("minute", 0)) % 60,
                 "ampm": "PM" if hour24 >= 12 else "AM",
-                "label": str(alarm.get("label") or ""),
+                "label": str(alarm.get("label") or "Alarm"),
             })
             self.days_selected = list(alarm.get("days") or [False] * 7)
             if len(self.days_selected) != 7:
@@ -1838,12 +1837,13 @@ class AlarmEditScreen(Screen):
         popup = Popup(title="", content=content, size_hint=(0.88, None), height=dp(455),
                       background="atlas://data/images/defaulttheme/modalview-background",
                       background_color=(0, 0, 0, 0), separator_height=0, auto_dismiss=False)
+        self._confirmation_popup = popup
 
         def finish(_button=None):
             popup.dismiss()
-            app.root.current = "home"
-            home = app.root.get_screen("home")
-            home._refresh_next_alarm()
+            self._confirmation_popup = None
+            # Confirmation closes into View Alarms; on_pre_enter refreshes the list.
+            app.root.current = "list"
             remaining_seconds = max(0.0, (trigger_dt - datetime.datetime.now()).total_seconds())
             total_minutes = int(math.ceil(remaining_seconds / 60.0))
             hours, minutes = divmod(total_minutes, 60)
@@ -1851,7 +1851,8 @@ class AlarmEditScreen(Screen):
                 hours, "hour" if hours == 1 else "hours",
                 minutes, "minute" if minutes == 1 else "minutes",
             )
-            Clock.schedule_once(lambda _dt: home.show_toast(message), 0.12)
+            if ANDROID:
+                Clock.schedule_once(lambda _dt: android_show_toast(message), 0.12)
 
         content.add_widget(RoundedActionButton("DONE", callback=finish, accent=True,
                                                size_hint_y=None, height=dp(44)))
@@ -1893,7 +1894,7 @@ class AlarmEditScreen(Screen):
             "hour": hour24,
             "minute": minute,
             "days": list(self.days_selected),
-            "label": str(self.time_state.get("label") or self.label_input.text or "").strip(),
+            "label": str(self.time_state.get("label") or self.label_input.text or "Alarm").strip() or "Alarm",
             "sound_path": sound_path,
             "sound_name": sound_name,
             "volume": volume,
@@ -2108,10 +2109,29 @@ class RedAlarmApp(App):
     _ready = False            # True once the real UI + store + scheduler exist
     _queued_intents = None    # intents that arrive before _ready (replayed after)
 
+    def _on_keyboard(self, window, key, scancode, codepoint, modifiers):
+        """Keep Android Back navigation inside the app's screen flow."""
+        if key != 27:
+            return False
+        if not self._ready or not getattr(self, "root", None):
+            return False
+
+        current = self.root.current
+        if current == "edit":
+            return self.root.get_screen("edit").handle_hardware_back()
+        if current == "list":
+            self.root.get_screen("list").go_home()
+            return True
+        if current == "ring":
+            # Never let Back close the app while an alarm is actively ringing.
+            return True
+        return False
+
     def build(self):
         self.title = APP_TITLE
         self._queued_intents = []
         self._startup_started = time.monotonic()
+        Window.bind(on_keyboard=self._on_keyboard)
 
         # Cheap, and wanted before anything else can go wrong: log
         # uncaught exceptions to a file instead of dying silently.
@@ -2136,7 +2156,7 @@ class RedAlarmApp(App):
         return self._splash
         
     def _build_splash(self):
-        return SplashScreen(duration=2.5)
+        return SplashScreen(duration=1.0)
     
 
     def _finish_startup(self, dt):
@@ -2188,10 +2208,10 @@ class RedAlarmApp(App):
         for args in queued:
             self._dispatch_intent(*args)
 
-        # Keep the splash visible for three seconds from app startup.
+        # Keep the splash visible for one second from app startup.
         remaining = max(
             0.0,
-            2.5 - (time.monotonic() - self._startup_started)
+            1.0 - (time.monotonic() - self._startup_started)
         )
         Clock.schedule_once(self._show_main_ui, remaining)
 

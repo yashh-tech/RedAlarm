@@ -671,18 +671,19 @@ class AlarmLabelInput(TextInput):
 
 class TimePickerPage(BoxLayout):
     def __init__(self, state, on_next, on_time_change=None, **kwargs):
-        super().__init__(orientation="vertical", padding=(dp(10), dp(10), dp(10), dp(10)), **kwargs)
+        # Pin the editor card near the top, rather than stretching it down the screen.
+        super().__init__(orientation="vertical", padding=(dp(6), dp(0), dp(6), dp(4)), **kwargs)
         self.state = state
         self.on_next = on_next
         self.on_time_change = on_time_change
         self.card = RoundedPanel(
-            orientation="vertical", padding=(dp(22), dp(18), dp(22), dp(18)),
-            spacing=dp(7), radius=dp(28), size_hint=(1, 1),
+            orientation="vertical", padding=(dp(18), dp(6), dp(18), dp(8)),
+            spacing=dp(4), radius=dp(28), size_hint=(1, None), height=dp(540),
         )
         self.add_widget(self.card)
         self.card.add_widget(self._label("S E T   A L A R M", 13, SUB, height=24, bold=True))
 
-        preview = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(78), spacing=dp(5))
+        preview = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(68), spacing=dp(5))
         self.time_label = Label(
             text=self._time_string(), color=TEXT, font_size=sp(44), bold=True,
             halign="left", valign="middle", size_hint=(None, 1), width=dp(170),
@@ -705,19 +706,20 @@ class TimePickerPage(BoxLayout):
         # Editable label for this alarm (e.g. Wake up, Office, Gym). It lives in
         # the shared state so it survives page transitions and appears in summary.
         label_block = BoxLayout(
-            orientation="vertical", size_hint_y=None, height=dp(58), spacing=dp(3)
+            orientation="vertical", size_hint_y=None, height=dp(52), spacing=dp(3)
         )
         label_block.add_widget(self._label("ALARM LABEL", 12.0, SUB, height=17, bold=True))
         self.label_input = AlarmLabelInput(
-            text=self.state.get("label", ""),
-            hint_text="e.g. Wake up, Office, Gym",
+            # This is actual saved text (also shown when the alarm rings), not a ghost hint.
+            text=self.state.get("label") or "Alarm",
+            hint_text="",
             multiline=False, write_tab=False,
             background_normal="", background_active="",
             background_color=(0, 0, 0, 0),
             foreground_color=TEXT, hint_text_color=(0.43, 0.43, 0.47, 1),
             cursor_color=RED, selection_color=(RED[0], RED[1], RED[2], 0.45),
             font_size=sp(14.5), padding=(dp(12), dp(7)),
-            size_hint_y=None, height=dp(35),
+            size_hint_y=None, height=dp(33),
         )
         add_rounded_background(
             self.label_input, (0.065, 0.065, 0.075, 1), radius=13,
@@ -744,8 +746,8 @@ class TimePickerPage(BoxLayout):
         self.card.add_widget(self.wheel_panel)
         self.card.add_widget(Widget(size_hint_y=None, height=dp(5)))
 
-        action_row = BoxLayout(orientation="horizontal", spacing=dp(12), size_hint_y=None, height=dp(48))
-        action_row.add_widget(RoundedActionButton("MORE OPTIONS", callback=self.on_next, accent=False))
+        action_row = BoxLayout(orientation="horizontal", spacing=dp(12), size_hint_y=None, height=dp(46))
+        # A single clear action on this page; DONE advances to alarm settings.
         action_row.add_widget(RoundedActionButton("DONE", callback=self.on_next, accent=True))
         self.card.add_widget(action_row)
 
@@ -766,7 +768,7 @@ class TimePickerPage(BoxLayout):
         self.state["hour"] = int(hour)
         self.state["minute"] = int(minute)
         self.state["ampm"] = str(ampm).upper()
-        self.state["label"] = str(label or "")
+        self.state["label"] = str(label or "Alarm")
         self.label_input.text = self.state["label"]
         self.hour_wheel.set_value(self.state["hour"])
         self.minute_wheel.set_value(self.state["minute"])
