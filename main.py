@@ -52,6 +52,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
+from redalarm_timepicker import AlarmEditorUI, RoundedActionButton, RoundedPanel, format_duration
 
 
 APP_TITLE = "Red Alarm"
@@ -578,11 +579,12 @@ if ANDROID:
         song just sits there / Silent" bug), and because it ignores the alarm
         volume stream."""
 
-        def __init__(self, path, loop=True):
+        def __init__(self, path, loop=True, volume=1.0):
             MediaPlayer = autoclass("android.media.MediaPlayer")
             AudioAttributes = autoclass("android.media.AudioAttributes")
             AudioAttributesBuilder = autoclass("android.media.AudioAttributes$Builder")
             self._mp = MediaPlayer()
+            self._volume = max(0.0, min(1.0, float(volume)))
             try:
                 attrs = (AudioAttributesBuilder()
                          .setUsage(AudioAttributes.USAGE_ALARM)
@@ -592,6 +594,7 @@ if ANDROID:
                 self._mp.setDataSource(JString(path))
                 self._mp.setLooping(bool(loop))
                 self._mp.prepare()
+                self._mp.setVolume(self._volume, self._volume)
                 self._mp.start()
             except Exception:
                 self.unload()
@@ -971,19 +974,20 @@ def resolve_ringtone_for_playback(raw_path, app_storage_dir, display_name=None):
     return raw_path
 
 
-def load_and_play(path, loop=True):
-    """Start playing `path`. Returns an object with stop()/unload(), or None.
-    Android: native MediaPlayer on the alarm stream first (plays mp3/m4a/etc
-    regardless of file name), Kivy's SoundLoader as the fallback. Desktop:
-    SoundLoader."""
+def load_and_play(path, loop=True, volume=1.0):
+    """Play a ringtone with the requested 0..1 volume on Android or desktop."""
     if not path:
         return None
     if not os.path.exists(path):
         print("[RedAlarm] playback: file does not exist:", path)
         return None
+    try:
+        volume = max(0.0, min(1.0, float(volume)))
+    except (TypeError, ValueError):
+        volume = 1.0
     if ANDROID:
         try:
-            player = _AndroidPlayer(path, loop)
+            player = _AndroidPlayer(path, loop, volume=volume)
             print("[RedAlarm] playback: native MediaPlayer started:", path)
             return player
         except Exception as exc:
@@ -992,6 +996,7 @@ def load_and_play(path, loop=True):
         sound = SoundLoader.load(path)
         if sound is not None:
             sound.loop = loop
+            sound.volume = volume
             sound.play()
             print("[RedAlarm] playback: SoundLoader started:", path)
             return sound
@@ -999,7 +1004,6 @@ def load_and_play(path, loop=True):
     except Exception as exc:
         print("[RedAlarm] playback: SoundLoader error:", exc)
     return None
-
 
 # ======================================================================
 # 3. CUSTOM WIDGETS (auto-registered with Kivy's Factory, so alarm.kv can
@@ -1239,6 +1243,44 @@ class HomeScreen(Screen):
 
     def go_alarms(self):
         App.get_running_app().root.current = "list"
+
+    def show_toast(self, message):
+        """Display a crisp, animated toast over the home clock."""
+        previous = getattr(self, "_toast_widget", None)
+        if previous is not None and previous.parent is self:
+            self.remove_widget(previous)
+        toast_width = max(dp(230), min(self.width - dp(32), dp(350)))
+        toast = BoxLayout(orientation="horizontal", size_hint=(None, None),
+                          size=(toast_width, dp(54)), padding=(dp(14), dp(7)))
+        toast.pos = (self.center_x - toast_width / 2, dp(28))
+        toast.opacity = 0
+        with toast.canvas.before:
+            Color(rgba=(0.075, 0.060, 0.064, 1))
+            toast_bg = RoundedRectangle(pos=toast.pos, size=toast.size, radius=[dp(18)])
+            Color(rgba=(0.6118, 0.0471, 0.0471, 1))
+            toast_border = Line(rounded_rectangle=(toast.x, toast.y, toast.width, toast.height, dp(18)), width=dp(1.0))
+        def sync_toast(*_):
+            toast_bg.pos, toast_bg.size = toast.pos, toast.size
+            toast_border.rounded_rectangle = (toast.x, toast.y, toast.width, toast.height, dp(18))
+        toast.bind(pos=sync_toast, size=sync_toast)
+        label = Label(text=message, color=(0.98, 0.98, 0.99, 1), font_size="12.5sp",
+                      bold=True, halign="center", valign="middle")
+        label.bind(size=lambda w, v: setattr(w, "text_size", (w.width, None)))
+        toast.add_widget(label)
+        self.add_widget(toast)
+        self._toast_widget = toast
+        Animation(opacity=1, duration=0.18, t="out_quad").start(toast)
+
+        def fade(_dt):
+            animation = Animation(opacity=0, duration=0.28, t="in_quad")
+            def remove_toast(*_):
+                if toast.parent is self:
+                    self.remove_widget(toast)
+                if getattr(self, "_toast_widget", None) is toast:
+                    self._toast_widget = None
+            animation.bind(on_complete=remove_toast)
+            animation.start(toast)
+        Clock.schedule_once(fade, 3.2)
 
     def go_new_alarm(self):
         app = App.get_running_app()
@@ -1523,307 +1565,188 @@ class PermissionsPopup(Popup):
             self._on_continue()
 
 
-class TimePickerPopup(Popup):
-    """Automatic HOUR -> MINUTES -> AM/PM time picker.
-
-    Opens on HOUR; picking an hour jumps to MINUTES (5-minute steps);
-    picking minutes jumps to AM/PM. The three step chips along the top
-    always show which part is active (and can be tapped to go back), the
-    live preview updates as you pick, and Cancel/OK are always visible so
-    OK works at any point (the pickers are pre-filled with the starting
-    time). on_confirm(hour12, minute, ampm) fires once, on OK."""
-
-    RED = (0.82, 0.10, 0.13, 1)
-    CARD = (0.11, 0.09, 0.09, 1)
-    SUB = (0.62, 0.58, 0.58, 1)
-    STEPS = ("hour", "minute", "ampm")
-    STEP_TITLES = {"hour": "HOUR", "minute": "MINUTES", "ampm": "AM / PM"}
-
-    def __init__(self, hour12, minute, ampm, on_confirm, **kwargs):
-        self.hour12 = hour12
-        self.minute = (minute // 5) * 5      # snap to the 5-minute grid
-        self.ampm = ampm
-        self.step = "hour"
-        self._on_confirm = on_confirm
-        self._grid_container = BoxLayout(orientation="vertical")
-        super().__init__(
-            title="", separator_height=0,
-            background_color=(0.03, 0.03, 0.035, 1),
-            size_hint=(0.9, 0.78),
-            **kwargs
-        )
-        self.content = self._build_content()
-        self._rebuild()
-
-    def _build_content(self):
-        root = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(10))
-
-        self._preview_label = Label(
-            text="", font_size="40sp", bold=True, color=(0.96, 0.96, 0.96, 1),
-            size_hint_y=None, height=dp(64),
-        )
-        root.add_widget(self._preview_label)
-
-        chips = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(8))
-        self._chips = {}
-        for key in self.STEPS:
-            chip = Button(text=self.STEP_TITLES[key], background_normal="",
-                          background_down="", bold=True, font_size="12.5sp")
-            chip.bind(on_release=lambda inst, k=key: self._goto(k))
-            self._chips[key] = chip
-            chips.add_widget(chip)
-        root.add_widget(chips)
-
-        root.add_widget(self._grid_container)
-
-        buttons = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(12))
-        cancel_btn = Button(text="Cancel", background_normal="", background_down="",
-                            background_color=(0, 0, 0, 0), color=self.SUB)
-        ok_btn = Button(text="OK", background_normal="", background_down="",
-                        background_color=(0, 0, 0, 0), color=self.RED, bold=True)
-        cancel_btn.bind(on_release=lambda *_: self.dismiss())
-        ok_btn.bind(on_release=self._confirm)
-        buttons.add_widget(Widget())
-        buttons.add_widget(cancel_btn)
-        buttons.add_widget(ok_btn)
-        root.add_widget(buttons)
-        return root
-
-    def _goto(self, step):
-        self.step = step
-        self._rebuild()
-
-    def _rebuild(self):
-        # live preview, with the part being edited drawn in red
-        hh = "{:02d}".format(self.hour12)
-        mm = "{:02d}".format(self.minute)
-        ap = self.ampm
-        def mark(text, active):
-            return "[color=d11a21]{}[/color]".format(text) if active else text
-        self._preview_label.markup = True
-        self._preview_label.text = "{}:{} {}".format(
-            mark(hh, self.step == "hour"),
-            mark(mm, self.step == "minute"),
-            mark(ap, self.step == "ampm"),
-        )
-        for key, chip in self._chips.items():
-            active = (key == self.step)
-            chip.background_color = self.RED if active else self.CARD
-            chip.color = (1, 1, 1, 1) if active else self.SUB
-
-        self._grid_container.clear_widgets()
-        if self.step == "ampm":
-            grid = GridLayout(cols=2, spacing=dp(12), padding=(0, dp(10)))
-            for value in ("AM", "PM"):
-                btn = Button(text=value, background_normal="", background_down="",
-                             bold=True, font_size="30sp")
-                btn.background_color = self.RED if value == self.ampm else self.CARD
-                btn.color = (1, 1, 1, 1) if value == self.ampm else self.SUB
-                btn.bind(on_release=lambda inst, v=value: self._pick(v))
-                grid.add_widget(btn)
-        else:
-            grid = GridLayout(cols=4, spacing=dp(8), padding=(0, dp(6)))
-            if self.step == "hour":
-                values, current = list(range(1, 13)), self.hour12
-            else:
-                values, current = list(range(0, 60, 5)), self.minute
-            for v in values:
-                btn = Button(text="{:02d}".format(v), background_normal="",
-                             background_down="", bold=True, font_size="17sp")
-                btn.background_color = self.RED if v == current else self.CARD
-                btn.color = (1, 1, 1, 1)
-                btn.bind(on_release=lambda inst, val=v: self._pick(val))
-                grid.add_widget(btn)
-        self._grid_container.add_widget(grid)
-
-    def _pick(self, value):
-        if self.step == "hour":
-            self.hour12 = value
-            self.step = "minute"        # auto-advance: HOUR -> MINUTES
-        elif self.step == "minute":
-            self.minute = value
-            self.step = "ampm"          # auto-advance: MINUTES -> AM/PM
-        else:
-            self.ampm = value           # AM/PM is the last step; OK confirms
-        self._rebuild()
-
-    def _confirm(self, *_):
-        if self._on_confirm:
-            self._on_confirm(self.hour12, self.minute, self.ampm)
-        self.dismiss()
-
-
 class AlarmEditScreen(Screen):
+    """Two-page alarm editor; existing persistence/scheduler APIs stay in main.py."""
     editing_id = StringProperty("")
     ampm = StringProperty("AM")
     days_selected = ListProperty([False] * 7)
     sound_path = StringProperty("")
-    sound_name = StringProperty("No sound chosen")
+    sound_name = StringProperty("Default beep")
     vibrate = BooleanProperty(False)
-    _auto_picker_pending = False
+    volume = NumericProperty(0.80)
+    auto_dismiss_sec = NumericProperty(300)
+    snooze_sec = NumericProperty(300)
+    error_message = StringProperty("")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.time_state = {"hour": 7, "minute": 16, "ampm": "AM", "label": ""}
+        self._return_screen = "home"
+        self.ui = AlarmEditorUI(self, size_hint=(1, 1), pos=self.pos)
+        self.add_widget(self.ui)
+        self.label_input = self.ui.picker_page.label_input
+        self.error_label = self.ui.settings_page.error_label
 
     def on_enter(self, *args):
-        # "Add New Alarm" opens straight into the HOUR -> MINUTES -> AM/PM
-        # picker, pre-filled with the current time (editing an existing
-        # alarm just shows its saved time; tap "Pick time" to change it).
-        if self._auto_picker_pending:
-            self._auto_picker_pending = False
-            Clock.schedule_once(lambda dt: self.open_time_picker(), 0.15)
+        # Time picker is now an inline page, not the legacy button-grid popup.
+        if self.ui.current != "picker":
+            self.ui.show_picker()
 
     def load_alarm(self, alarm_id):
-        ids = self.ids
-        ids.error_label.text = ""
-        self._auto_picker_pending = alarm_id is None
+        """Load defaults or an existing record and reset the editor to page 1."""
+        app = App.get_running_app()
+        current_screen = getattr(app.root, "current", "home") if app.root else "home"
+        self._return_screen = current_screen if current_screen in ("home", "list") else "home"
+        self.error_message = ""
+        self.error_label.text = ""
+        self.ui.current = "picker"
 
         if alarm_id is None:
             self.editing_id = ""
-            # New alarm defaults to the device's current time, not a fixed
-            # 7:00 AM — falls back to 00:00 if anything about "now" fails.
-            try:
-                now = datetime.datetime.now()
-                h12 = now.hour % 12 or 12
-                ids.input_hour.text = "{:02d}".format(h12)
-                ids.input_minute.text = "{:02d}".format(now.minute)
-                self.ampm = "PM" if now.hour >= 12 else "AM"
-            except Exception:
-                ids.input_hour.text = "12"
-                ids.input_minute.text = "00"
-                self.ampm = "AM"
+            now = datetime.datetime.now()
+            hour12 = now.hour % 12 or 12
+            self.time_state.update({
+                "hour": hour12,
+                "minute": now.minute,
+                "ampm": "PM" if now.hour >= 12 else "AM",
+                "label": "",
+            })
             self.days_selected = [False] * 7
             self.sound_path = ""
-            self.sound_name = "Default beep (tap to change)"
+            self.sound_name = "Default beep"
             self.vibrate = False
-            ids.dismiss_min.text = "5"
-            ids.dismiss_sec.text = "0"
-            ids.snooze_min.text = "5"
-            ids.snooze_sec.text = "0"
-            ids.label_input.text = ""
-            ids.delete_btn.opacity = 0
-            ids.delete_btn.disabled = True
+            self.volume = 0.80
+            self.auto_dismiss_sec = 300
+            self.snooze_sec = 300
         else:
             alarm = App.get_running_app().store.get(alarm_id)
             if not alarm:
                 return
             self.editing_id = alarm_id
-            h, m = alarm["hour"], alarm["minute"]
-            self.ampm = "PM" if h >= 12 else "AM"
-            h12 = h % 12 or 12
-            ids.input_hour.text = "{:02d}".format(h12)
-            ids.input_minute.text = "{:02d}".format(m)
+            hour24 = int(alarm.get("hour", 7)) % 24
+            self.time_state.update({
+                "hour": hour24 % 12 or 12,
+                "minute": int(alarm.get("minute", 0)) % 60,
+                "ampm": "PM" if hour24 >= 12 else "AM",
+                "label": str(alarm.get("label") or ""),
+            })
             self.days_selected = list(alarm.get("days") or [False] * 7)
-            self.sound_path = alarm.get("sound_path", "")
+            if len(self.days_selected) != 7:
+                self.days_selected = (self.days_selected + [False] * 7)[:7]
+            self.sound_path = alarm.get("sound_path", "") or ""
             self.sound_name = alarm.get("sound_name") or "Default beep"
             self.vibrate = bool(alarm.get("vibrate", False))
-            dismiss_sec = int(alarm.get("auto_dismiss_sec", 300))
-            ids.dismiss_min.text = str(dismiss_sec // 60)
-            ids.dismiss_sec.text = str(dismiss_sec % 60)
-            snooze_sec = int(alarm.get("snooze_sec", 300))
-            ids.snooze_min.text = str(snooze_sec // 60)
-            ids.snooze_sec.text = str(snooze_sec % 60)
-            ids.label_input.text = alarm.get("label", "")
-            ids.delete_btn.opacity = 1
-            ids.delete_btn.disabled = False
+            try:
+                self.volume = max(0.0, min(1.0, float(alarm.get("volume", 0.80))))
+            except (TypeError, ValueError):
+                self.volume = 0.80
+            self.auto_dismiss_sec = max(3, min(10800, int(alarm.get("auto_dismiss_sec", 300) or 300)))
+            self.snooze_sec = max(3, min(10800, int(alarm.get("snooze_sec", 300) or 300)))
 
-        self._refresh_day_buttons()
+        self.ampm = self.time_state["ampm"]
+        self.ui.picker_page.set_values(
+            self.time_state["hour"], self.time_state["minute"],
+            self.time_state["ampm"], self.time_state["label"],
+        )
+        self.ui.settings_page.refresh_from_editor()
 
-    def _refresh_day_buttons(self):
-        for i in range(7):
-            btn = self.ids.get("day_{}".format(i))
-            if btn:
-                btn.state = "down" if self.days_selected[i] else "normal"
+    def _picker_state_changed(self, state):
+        self.ampm = state.get("ampm", "AM")
+        if hasattr(self, "ui"):
+            self.ui.settings_page.refresh_time()
+
+    def show_settings(self):
+        self.ui.show_settings()
+
+    def show_picker(self):
+        self.ui.show_picker()
 
     def set_day(self, index, on):
-        """Driven by each day button's own state, so the data can never
-        drift out of sync with what's drawn."""
-        if self.days_selected[index] != on:
+        if not 0 <= index < 7:
+            return
+        if self.days_selected[index] != bool(on):
             days = list(self.days_selected)
-            days[index] = on
+            days[index] = bool(on)
             self.days_selected = days
 
+    def _refresh_day_buttons(self):
+        if hasattr(self, "ui"):
+            self.ui.settings_page.refresh_days()
+
     def set_ampm(self, value):
-        self.ampm = value
+        self.ampm = "PM" if str(value).upper() == "PM" else "AM"
+        self.time_state["ampm"] = self.ampm
+        self.ui.picker_page.set_values(
+            self.time_state["hour"], self.time_state["minute"],
+            self.ampm, self.time_state.get("label", ""),
+        )
+        self.ui.settings_page.refresh_time()
 
     def open_time_picker(self):
-        try:
-            h12 = int(self.ids.input_hour.text)
-        except (TypeError, ValueError):
-            h12 = 12
-        try:
-            minute = int(self.ids.input_minute.text)
-        except (TypeError, ValueError):
-            minute = 0
-        popup = TimePickerPopup(h12, minute, self.ampm, self._apply_picked_time)
-        popup.open()
+        # Kept as a compatibility hook for any old call site; now it shows page 1.
+        self.ui.show_picker()
 
     def _apply_picked_time(self, hour12, minute, ampm):
-        self.ids.input_hour.text = "{:02d}".format(hour12)
-        self.ids.input_minute.text = "{:02d}".format(minute)
-        self.ampm = ampm
+        self.time_state.update({"hour": int(hour12), "minute": int(minute), "ampm": str(ampm).upper()})
+        self.ampm = self.time_state["ampm"]
+        self.ui.picker_page.set_values(hour12, minute, ampm, self.time_state.get("label", ""))
+        self.ui.settings_page.refresh_time()
 
     def choose_sound(self):
-        self.ids.error_label.text = ""
+        self.error_message = ""
+        self.error_label.text = ""
         pick_ringtone_file(self._on_sound_picked, self._on_picker_error)
 
     def _on_picker_error(self, message):
-        self.ids.error_label.text = message
+        self.error_message = str(message)
+        self.error_label.text = self.error_message
 
     def _on_sound_picked(self, path):
         if not path:
             return
         print("[RedAlarm] ringtone picked, raw path/URI:", path)
-
         name = None
         if ANDROID and path.startswith("content://"):
             try:
                 name = android_get_display_name(path)
             except Exception as exc:
                 print("[RedAlarm] display-name lookup failed:", exc)
-
-            # ROOT CAUSE of "selected but plays Silent": a content:// URI's
-            # read permission is only reliably valid for the current app
-            # session unless explicitly persisted, and alarms often fire
-            # hours/days later after the process has been killed and
-            # restarted by AlarmManager — by then the grant can be gone and
-            # the file read silently fails at ring time with no fallback.
-            # Fix: copy the bytes to our own storage right now, at pick
-            # time, while the grant is definitely still valid, and store
-            # that durable local path instead of the URI.
             try:
                 android_take_persistable_permission(path)
             except Exception as exc:
                 print("[RedAlarm] could not persist URI permission:", exc)
             app = App.get_running_app()
             try:
-                local_path = resolve_ringtone_for_playback(path, app.ringtone_cache_dir, display_name=name)
+                local_path = resolve_ringtone_for_playback(
+                    path, app.ringtone_cache_dir, display_name=name
+                )
             except Exception as exc:
                 local_path = None
                 print("[RedAlarm] immediate ringtone copy raised:", exc)
             if not local_path or not os.path.exists(local_path):
                 print("[RedAlarm] immediate ringtone copy FAILED for", path)
-                self.ids.error_label.text = (
-                    "Couldn't read that file — try picking it again."
-                )
+                self._on_picker_error("Couldn't read that file — try picking it again.")
                 return
             print("[RedAlarm] ringtone copied to durable local path:", local_path)
             self.sound_path = local_path
         else:
             self.sound_path = path
-
         self.sound_name = name or os.path.basename(path.replace("\\", "/"))
+        self.error_message = ""
+        self.error_label.text = ""
+        self.ui.settings_page.refresh_sound()
 
     def preview_sound(self):
-        """Plays the chosen (or default) sound for ~2.5s, completely outside
-        the alarm-firing pipeline - the fastest way to tell whether audio
-        works on this device at all, separate from scheduling."""
-        self.ids.error_label.text = ""
+        self.error_message = ""
+        self.error_label.text = ""
         app = App.get_running_app()
         path = self.sound_path or app.default_ringtone_path
-        sound = load_and_play(path, loop=False)
+        sound = load_and_play(path, loop=False, volume=float(self.volume))
         if sound is None:
-            self.ids.error_label.text = "Couldn't play that sound - try another file."
+            self._on_picker_error("Couldn't play that sound — try another file.")
             return
 
-        def _stop(dt):
+        def _stop(_dt):
             try:
                 sound.stop()
                 sound.unload()
@@ -1832,7 +1755,9 @@ class AlarmEditScreen(Screen):
         Clock.schedule_once(_stop, 2.5)
 
     def cancel_edit(self):
-        App.get_running_app().root.current = "list"
+        app = App.get_running_app()
+        destination = self._return_screen if self._return_screen in ("home", "list") else "home"
+        app.root.current = destination
 
     def delete_alarm(self):
         if not self.editing_id:
@@ -1849,65 +1774,141 @@ class AlarmEditScreen(Screen):
         app.root.current = "list"
 
     def _fail(self, message):
-        self.ids.error_label.text = message
+        self.error_message = str(message)
+        self.error_label.text = self.error_message
+        if self.ui.current != "settings":
+            self.ui.show_settings()
+
+    @staticmethod
+    def _next_day_label(trigger_dt, now=None):
+        now = now or datetime.datetime.now()
+        if trigger_dt.date() == now.date():
+            return "Today"
+        if trigger_dt.date() == now.date() + datetime.timedelta(days=1):
+            return "Tomorrow"
+        return trigger_dt.strftime("%A, %d %b")
+
+    def _show_alarm_confirmation(self, alarm, trigger_dt):
+        app = App.get_running_app()
+        now = datetime.datetime.now()
+        day_label = self._next_day_label(trigger_dt, now)
+        label_text = (alarm.get("label") or "Alarm").strip() or "Alarm"
+        time_text = format_time(alarm["hour"], alarm["minute"])
+        repeat_text = format_days(alarm.get("days"))
+        volume_text = "{}%".format(int(round(float(alarm.get("volume", 0.80)) * 100)))
+        details = [
+            ("Sound", alarm.get("sound_name") or "Default beep"),
+            ("Repeat", repeat_text),
+            ("Volume", volume_text),
+            ("Vibration", "On" if alarm.get("vibrate") else "Off"),
+            ("Auto-dismiss", format_duration(alarm.get("auto_dismiss_sec", 300))),
+            ("Snooze", format_duration(alarm.get("snooze_sec", 300))),
+        ]
+        content = BoxLayout(orientation="vertical", padding=(dp(18), dp(14), dp(18), dp(14)), spacing=dp(8))
+        title = Label(text="ALARM SET FOR {}".format(day_label.upper()), color=(156/255, 12/255, 12/255, 1),
+                      font_size="15sp", bold=True, size_hint_y=None, height=dp(28),
+                      halign="center", valign="middle")
+        title.bind(size=lambda w, v: setattr(w, "text_size", v))
+        content.add_widget(title)
+        name_label = Label(text=label_text, color=(0.64, 0.64, 0.68, 1), font_size="13sp", bold=True,
+                           size_hint_y=None, height=dp(22), halign="center", valign="middle")
+        name_label.bind(size=lambda w, v: setattr(w, "text_size", v))
+        content.add_widget(name_label)
+        big_time = Label(text=time_text, color=(0.975, 0.975, 0.985, 1), font_size="32sp", bold=True,
+                         size_hint_y=None, height=dp(52), halign="center", valign="middle")
+        big_time.bind(size=lambda w, v: setattr(w, "text_size", v))
+        content.add_widget(big_time)
+
+        details_panel = RoundedPanel(fill=(0.060, 0.060, 0.068, 1), radius=dp(16),
+                                      orientation="vertical", padding=(dp(12), dp(8), dp(12), dp(8)),
+                                      spacing=dp(2), size_hint_y=None, height=dp(162))
+        for key, value in details:
+            row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(23), spacing=dp(8))
+            left = Label(text=key, color=(0.64, 0.64, 0.68, 1), font_size="11sp",
+                         halign="left", valign="middle", size_hint_x=0.42)
+            left.bind(size=lambda w, v: setattr(w, "text_size", v))
+            right = Label(text=str(value), color=(0.975, 0.975, 0.985, 1), font_size="11sp", bold=True,
+                          halign="right", valign="middle", size_hint_x=0.58)
+            right.bind(size=lambda w, v: setattr(w, "text_size", v))
+            row.add_widget(left)
+            row.add_widget(right)
+            details_panel.add_widget(row)
+        content.add_widget(details_panel)
+
+        popup = Popup(title="", content=content, size_hint=(0.88, None), height=dp(455),
+                      background="atlas://data/images/defaulttheme/modalview-background",
+                      background_color=(0, 0, 0, 0), separator_height=0, auto_dismiss=False)
+
+        def finish(_button=None):
+            popup.dismiss()
+            app.root.current = "home"
+            home = app.root.get_screen("home")
+            home._refresh_next_alarm()
+            remaining_seconds = max(0.0, (trigger_dt - datetime.datetime.now()).total_seconds())
+            total_minutes = int(math.ceil(remaining_seconds / 60.0))
+            hours, minutes = divmod(total_minutes, 60)
+            message = "Alarm Set for {} {} and {} {} from now".format(
+                hours, "hour" if hours == 1 else "hours",
+                minutes, "minute" if minutes == 1 else "minutes",
+            )
+            Clock.schedule_once(lambda _dt: home.show_toast(message), 0.12)
+
+        content.add_widget(RoundedActionButton("DONE", callback=finish, accent=True,
+                                               size_hint_y=None, height=dp(44)))
+        popup.open()
 
     def save_alarm(self):
-        ids = self.ids
-
         try:
-            h12 = int(ids.input_hour.text)
-            minute = int(ids.input_minute.text)
-        except (TypeError, ValueError):
+            hour12 = int(self.time_state["hour"])
+            minute = int(self.time_state["minute"])
+            period = str(self.time_state.get("ampm", self.ampm)).upper()
+        except (KeyError, TypeError, ValueError):
             return self._fail("Enter a valid time.")
-        if not 1 <= h12 <= 12:
+        if not 1 <= hour12 <= 12:
             return self._fail("Hour must be between 1 and 12.")
         if not 0 <= minute <= 59:
             return self._fail("Minutes must be between 00 and 59.")
-
-        # 12h + AM/PM -> 24h for storage
-        if self.ampm == "PM":
-            hour = 12 if h12 == 12 else h12 + 12
+        if period == "PM":
+            hour24 = 12 if hour12 == 12 else hour12 + 12
         else:
-            hour = 0 if h12 == 12 else h12
-
+            hour24 = 0 if hour12 == 12 else hour12
         try:
-            total_dismiss = (int(ids.dismiss_min.text or "0") * 60
-                             + int(ids.dismiss_sec.text or "0"))
-            total_snooze = (int(ids.snooze_min.text or "0") * 60
-                            + int(ids.snooze_sec.text or "0"))
-        except (TypeError, ValueError):
-            return self._fail("Enter valid durations.")
-        if total_dismiss <= 0:
-            return self._fail("Auto-dismiss must be at least 1 second.")
-        if total_snooze <= 0:
-            return self._fail("Snooze must be at least 1 second.")
+            dismiss_seconds = int(self.auto_dismiss_sec)
+            snooze_seconds = int(self.snooze_sec)
+            volume = max(0.0, min(1.0, float(self.volume)))
+        except (TypeError, ValueError, OverflowError):
+            return self._fail("Enter valid settings values.")
+        if not 3 <= dismiss_seconds <= 10800:
+            return self._fail("Auto-dismiss must be between 3 seconds and 3 Hr.")
+        if not 3 <= snooze_seconds <= 10800:
+            return self._fail("Snooze must be between 3 seconds and 3 Hr.")
 
         app = App.get_running_app()
+        is_new_alarm = not bool(self.editing_id)
         alarm = app.store.get(self.editing_id) or {}
-        # No custom sound picked -> fall back to the built-in default beep,
-        # so a missing/failed file picker can never block saving an alarm.
         sound_path = self.sound_path or app.default_ringtone_path
         sound_name = self.sound_name if self.sound_path else "Default beep"
         alarm.update({
             "id": self.editing_id or new_alarm_id(),
-            "hour": hour,
+            "hour": hour24,
             "minute": minute,
             "days": list(self.days_selected),
-            "label": ids.label_input.text.strip(),
+            "label": str(self.time_state.get("label") or self.label_input.text or "").strip(),
             "sound_path": sound_path,
             "sound_name": sound_name,
-            "auto_dismiss_sec": total_dismiss,
-            "snooze_sec": total_snooze,
-            "vibrate": self.vibrate,
+            "volume": volume,
+            "auto_dismiss_sec": dismiss_seconds,
+            "snooze_sec": snooze_seconds,
+            "vibrate": bool(self.vibrate),
             "enabled": True,
         })
         app.store.put(alarm)
-
         app.scheduler.cancel(alarm)
         app.scheduler.cancel_snooze(alarm)
-        app.scheduler.schedule(alarm)
-
-        app.root.current = "list"
+        trigger_dt = app.scheduler.schedule(alarm)
+        print("[RedAlarm] alarm saved:", alarm.get("id"), "next trigger:", trigger_dt,
+              "new:", is_new_alarm)
+        self._show_alarm_confirmation(alarm, trigger_dt)
 
 
 class AlarmRingScreen(Screen):
@@ -1975,10 +1976,14 @@ class AlarmRingScreen(Screen):
             print("[RedAlarm] ring: resolved path missing, falling back to default")
             path = app.default_ringtone_path
 
-        sound = load_and_play(path, loop=True) if path else None
+        try:
+            ring_volume = max(0.0, min(1.0, float(alarm.get("volume", 0.80))))
+        except (TypeError, ValueError):
+            ring_volume = 0.80
+        sound = load_and_play(path, loop=True, volume=ring_volume) if path else None
         if sound is None and path != app.default_ringtone_path:
             print("[RedAlarm] ring: chosen sound failed, falling back to default beep")
-            sound = load_and_play(app.default_ringtone_path, loop=True)
+            sound = load_and_play(app.default_ringtone_path, loop=True, volume=ring_volume)
         self._sound = sound
         if sound is None:
             print("[RedAlarm] ring: NO sound could be started (not even the default)")
