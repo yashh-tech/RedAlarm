@@ -535,6 +535,25 @@ if ANDROID:
                         context.getSystemService(Context.NOTIFICATION_SERVICE))
         manager.cancel(_RING_NOTIF_ID)
 
+
+    @run_on_ui_thread
+    def android_close_alarm_task():
+        """Close the Android app task after a ringing action has been handled."""
+        try:
+            activity = _activity()
+            if activity is None:
+                return
+            # minapi is 24; retain fallbacks for safety on unexpected runtimes.
+            try:
+                activity.finishAndRemoveTask()
+            except Exception:
+                try:
+                    activity.finishAffinity()
+                except Exception:
+                    activity.finish()
+        except Exception as exc:
+            print("[RedAlarm] could not close alarm task:", exc)
+
     # Separate from the temporary ring/snooze notification (ID 1002). This
     # ongoing notification remains posted while a future alarm is scheduled.
     _NEXT_ALARM_CHANNEL_ID = "redalarm_next_alarm_v1"
@@ -1662,8 +1681,8 @@ class AlarmEditScreen(Screen):
     sound_name = StringProperty("Default beep")
     vibrate = BooleanProperty(False)
     volume = NumericProperty(0.80)
-    auto_dismiss_sec = NumericProperty(300)
-    snooze_sec = NumericProperty(300)
+    auto_dismiss_sec = NumericProperty(5)
+    snooze_sec = NumericProperty(60)
     error_message = StringProperty("")
 
     def __init__(self, **kwargs):
@@ -1722,8 +1741,8 @@ class AlarmEditScreen(Screen):
             self.sound_name = "Default beep"
             self.vibrate = False
             self.volume = 0.80
-            self.auto_dismiss_sec = 300
-            self.snooze_sec = 300
+            self.auto_dismiss_sec = 5
+            self.snooze_sec = 60
         else:
             alarm = App.get_running_app().store.get(alarm_id)
             if not alarm:
@@ -1746,8 +1765,8 @@ class AlarmEditScreen(Screen):
                 self.volume = max(0.0, min(1.0, float(alarm.get("volume", 0.80))))
             except (TypeError, ValueError):
                 self.volume = 0.80
-            self.auto_dismiss_sec = max(3, min(10800, int(alarm.get("auto_dismiss_sec", 300) or 300)))
-            self.snooze_sec = max(3, min(10800, int(alarm.get("snooze_sec", 300) or 300)))
+            self.auto_dismiss_sec = max(1, min(10800, int(alarm.get("auto_dismiss_sec", 5) or 5)))
+            self.snooze_sec = max(3, min(10800, int(alarm.get("snooze_sec", 60) or 60)))
 
         self.ampm = self.time_state["ampm"]
         self.ui.picker_page.set_values(
@@ -1908,8 +1927,8 @@ class AlarmEditScreen(Screen):
             ("Repeat", repeat_text),
             ("Volume", volume_text),
             ("Vibration", "On" if alarm.get("vibrate") else "Off"),
-            ("Auto-dismiss", format_duration(alarm.get("auto_dismiss_sec", 300))),
-            ("Snooze", format_duration(alarm.get("snooze_sec", 300))),
+            ("Auto-dismiss", format_duration(alarm.get("auto_dismiss_sec", 5))),
+            ("Snooze", format_duration(alarm.get("snooze_sec", 60))),
         ]
         content = BoxLayout(orientation="vertical", padding=(dp(18), dp(14), dp(18), dp(14)), spacing=dp(8))
         title = Label(text="ALARM SET FOR {}".format(day_label.upper()), color=(156/255, 12/255, 12/255, 1),
@@ -1987,8 +2006,8 @@ class AlarmEditScreen(Screen):
             volume = max(0.0, min(1.0, float(self.volume)))
         except (TypeError, ValueError, OverflowError):
             return self._fail("Enter valid settings values.")
-        if not 3 <= dismiss_seconds <= 10800:
-            return self._fail("Auto-dismiss must be between 3 seconds and 3 Hr.")
+        if not 1 <= dismiss_seconds <= 10800:
+            return self._fail("Auto-dismiss must be between 1 second and 3 Hr.")
         if not 3 <= snooze_seconds <= 10800:
             return self._fail("Snooze must be between 3 seconds and 3 Hr.")
 
@@ -2098,7 +2117,7 @@ class AlarmRingScreen(Screen):
         if sound is None:
             print("[RedAlarm] ring: NO sound could be started (not even the default)")
 
-        self._remaining_seconds = max(1, int(alarm.get("auto_dismiss_sec", 300) or 300))
+        self._remaining_seconds = max(1, int(alarm.get("auto_dismiss_sec", 5) or 5))
         self._update_countdown_text()
 
         # ONE timer drives both the digits and the auto-dismiss: the tick
@@ -2181,7 +2200,7 @@ class AlarmRingScreen(Screen):
         snooze_trigger = None
         if alarm:
             if reason == "snooze":
-                snooze_sec = max(1, int(alarm.get("snooze_sec", 300) or 300))
+                snooze_sec = max(1, int(alarm.get("snooze_sec", 60) or 60))
                 snooze_trigger = datetime.datetime.now() + datetime.timedelta(
                     seconds=snooze_sec
                 )
@@ -2197,7 +2216,9 @@ class AlarmRingScreen(Screen):
 
         self.alarm_id = ""
         self.countdown_text = ""
-        app.root.current = "home"
+        close_task = ANDROID and reason in ("auto", "dismiss", "snooze")
+        if not close_task:
+            app.root.current = "home"
 
         app.refresh_next_alarm_notification()
         if keep_snooze_notification and snooze_trigger and ANDROID:
@@ -2205,6 +2226,10 @@ class AlarmRingScreen(Screen):
                 android_show_snoozed_notification(current_alarm_id, snooze_trigger)
             except Exception as exc:
                 print("[RedAlarm] snoozed notification error:", exc)
+
+        if close_task:
+            # Let the OS alarm and snooze notification be posted before removing the task.
+            Clock.schedule_once(lambda _dt: android_close_alarm_task(), 0.20)
 
 
 class RootManager(ScreenManager):
@@ -2555,6 +2580,7 @@ class RedAlarmApp(App):
                         self.scheduler.cancel(alarm)
                 if ANDROID:
                     android_cancel_ring_notification()
+                    Clock.schedule_once(lambda _dt: android_close_alarm_task(), 0.20)
             return
         if action_kind == "snooze":
             print("[RedAlarm] notification Snooze tapped:", alarm_id)
@@ -2564,7 +2590,7 @@ class RedAlarmApp(App):
                 # A cold-start action has no active RingScreen to operate on.
                 alarm = self.store.get(alarm_id)
                 if alarm:
-                    snooze_sec = max(1, int(alarm.get("snooze_sec", 300) or 300))
+                    snooze_sec = max(1, int(alarm.get("snooze_sec", 60) or 60))
                     next_trigger = datetime.datetime.now() + datetime.timedelta(
                         seconds=snooze_sec
                     )
@@ -2572,6 +2598,7 @@ class RedAlarmApp(App):
                     ring._keep_snooze_notification = True
                     if ANDROID:
                         android_show_snoozed_notification(alarm_id, next_trigger)
+                        Clock.schedule_once(lambda _dt: android_close_alarm_task(), 0.20)
             return
 
         # A genuine fire, or a plain tap on the notification body while

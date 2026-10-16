@@ -321,7 +321,7 @@ def _load_spinner_tick():
         for _ in range(4):
             sound = SoundLoader.load(path)
             if sound is not None:
-                sound.volume = 0.40
+                sound.volume = 0.45
                 voices.append(sound)
         _SPINNER_TICK_SOUNDS = voices
     except Exception as exc:
@@ -336,7 +336,7 @@ def _play_spinner_tick():
     global _SPINNER_TICK_LAST_AT, _SPINNER_TICK_CURSOR
     now = time.monotonic()
     # A small debounce avoids a buzz on very fast flicks but still ticks naturally.
-    if now - _SPINNER_TICK_LAST_AT < 0.036:
+    if now - _SPINNER_TICK_LAST_AT < 0.028:
         return
     voices = _load_spinner_tick()
     if not voices:
@@ -345,7 +345,7 @@ def _play_spinner_tick():
     _SPINNER_TICK_CURSOR += 1
     try:
         sound.stop()
-        sound.volume = 0.40
+        sound.volume = 0.45
         sound.play()
         _SPINNER_TICK_LAST_AT = now
     except Exception as exc:
@@ -368,8 +368,8 @@ class SpinnerWheel(Widget):
         self.on_change = on_change
         self.row_height = dp(56)
         # Natural one-finger response: a normal drag advances the dial without feeling sticky.
-        self.drag_sensitivity = 1.014  # 30% more responsive than 0.78, while velocity remains smoothed
-        self.max_fling_velocity = 3.10  # cap velocity so a flick still feels controlled
+        self.drag_sensitivity = 1.35  # responsive to short, small finger drags
+        self.max_fling_velocity = 4.00  # native-clock-style flick without an excessive jump
         if selected_value not in self.values:
             selected_value = self.values[0]
         self._active_value = selected_value
@@ -566,7 +566,7 @@ class SpinnerWheel(Widget):
                 self._start_settle()
                 return False
         self._set_position(next_pos)
-        self._velocity *= math.exp(-4.70 * dt)
+        self._velocity *= math.exp(-4.20 * dt)
         if abs(self._velocity) < 0.48:
             self._fling_event = None
             self._start_settle()
@@ -580,7 +580,7 @@ class SpinnerWheel(Widget):
         Animation.cancel_all(self, "position")
         target = self._bounded(self._round_index(self.position))
         # Longer eased settle is intentionally gentle near the selected value.
-        animation = Animation(position=float(target), duration=0.36, t="out_cubic")
+        animation = Animation(position=float(target), duration=0.30, t="out_cubic")
         self._settle_animation = animation
         animation.start(self)
 
@@ -991,10 +991,10 @@ def _parse_duration(text, current_value):
 class DurationRow(BoxLayout):
     """Bounded duration control: seconds presets, then minutes up to 3 Hr."""
     # Numeric order is used for the +/- stepper so it behaves naturally.
-    PRESETS = ([3, 5, 10, 15, 30] + [60 * m for m in range(1, 11)]
+    PRESETS = (list(range(1, 11)) + [15, 30] + [60 * m for m in range(1, 11)]
                + [15 * 60, 30 * 60] + list(range(45 * 60, 180 * 60 + 1, 15 * 60)))
     # The selection sheet presents short test intervals in the requested order.
-    DISPLAY_PRESETS = ([30, 15, 10, 5, 3] + [60 * m for m in range(1, 11)]
+    DISPLAY_PRESETS = (list(range(1, 11)) + [15, 30] + [60 * m for m in range(1, 11)]
                        + [15 * 60, 30 * 60] + list(range(45 * 60, 180 * 60 + 1, 15 * 60)))
 
     def __init__(self, title, subtitle, value, min_value, max_value, on_change, **kwargs):
@@ -1102,7 +1102,7 @@ class DurationRow(BoxLayout):
         seconds_title.bind(size=lambda w, v: setattr(w, "text_size", v))
         choices.add_widget(seconds_title)
 
-        second_values = [30, 15, 10, 5, 3]
+        second_values = [v for v in list(range(1, 11)) + [15, 30] if self.min_value <= v <= self.max_value]
         seconds_grid = GridLayout(
             cols=3, spacing=dp(6), padding=0,
             size_hint_y=None, row_default_height=dp(36), row_force_default=True,
@@ -1332,7 +1332,7 @@ class AlarmAppSettingsPage(BoxLayout):
 
         self.dismiss_control = DurationRow(
             "AUTO-DISMISS", "Stop alarm automatically", int(self.editor.auto_dismiss_sec),
-            3, 10800, lambda val: setattr(self.editor, "auto_dismiss_sec", val),
+            1, 10800, lambda val: setattr(self.editor, "auto_dismiss_sec", val),
             size_hint_y=None, height=dp(58),
         )
         self.content.add_widget(self.dismiss_control)
