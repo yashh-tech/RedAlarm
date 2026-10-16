@@ -669,10 +669,11 @@ class AlarmLabelInput(TextInput):
             self.focus = True
 
 
-class TimePickerPage(BoxLayout):
+class TimePickerPage(AnchorLayout):
     def __init__(self, state, on_next, on_time_change=None, **kwargs):
-        # Pin the editor card near the top, rather than stretching it down the screen.
-        super().__init__(orientation="vertical", padding=(dp(6), dp(0), dp(6), dp(4)), **kwargs)
+        # Center the full time-picker card vertically and horizontally in the editor page.
+        super().__init__(anchor_x="center", anchor_y="center",
+                         padding=(dp(6), dp(0), dp(6), dp(0)), **kwargs)
         self.state = state
         self.on_next = on_next
         self.on_time_change = on_time_change

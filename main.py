@@ -303,35 +303,35 @@ if ANDROID:
 
     @run_on_ui_thread
     def _apply_lockscreen_flags(show):
-        # Window flags have to be touched on Android's UI thread (the Kivy/SDL
-        # Python thread is not it), hence run_on_ui_thread.
+        """Only the live ringing screen may draw over the keyguard."""
         try:
-            window = _activity().getWindow()
+            activity = _activity()
+            window = activity.getWindow()
             if show:
-                # NOTE: no FLAG_DISMISS_KEYGUARD / requestDismissKeyguard() on
-                # purpose - on a PIN/pattern phone those pop the unlock prompt
-                # over the alarm. We want the alarm shown OVER the lock screen.
+                # Never dismiss the user's PIN/pattern. Put only the ringing
+                # screen over the lock screen and wake the display for it.
                 window.addFlags(WindowManagerFlags.FLAG_SHOW_WHEN_LOCKED
                                 | WindowManagerFlags.FLAG_TURN_SCREEN_ON
                                 | WindowManagerFlags.FLAG_KEEP_SCREEN_ON)
                 if BuildVersion.SDK_INT >= 27:
-                    _activity().setShowWhenLocked(True)
-                    _activity().setTurnScreenOn(True)
-                print("[RedAlarm] lockscreen: show-over-lockscreen flags applied")
+                    activity.setShowWhenLocked(True)
+                    activity.setTurnScreenOn(True)
+                print("[RedAlarm] lockscreen: ringing screen shown")
             else:
-                # Only keep-screen-on is undone. showWhenLocked/turnScreenOn
-                # stay exactly as RedAlarmApplication.java set them at activity
-                # creation - resetting them here is what would stop the NEXT
-                # alarm from waking the phone.
-                window.clearFlags(WindowManagerFlags.FLAG_KEEP_SCREEN_ON)
-                print("[RedAlarm] lockscreen: keep-screen-on cleared")
+                # Clear ALL lock-screen flags so Home/clock/editor never remain
+                # above the keyguard after dismissal or snoozing.
+                window.clearFlags(WindowManagerFlags.FLAG_SHOW_WHEN_LOCKED
+                                  | WindowManagerFlags.FLAG_TURN_SCREEN_ON
+                                  | WindowManagerFlags.FLAG_KEEP_SCREEN_ON)
+                if BuildVersion.SDK_INT >= 27:
+                    activity.setShowWhenLocked(False)
+                    activity.setTurnScreenOn(False)
+                print("[RedAlarm] lockscreen: normal activity hidden by keyguard")
         except Exception as exc:
             print("[RedAlarm] lockscreen flags error:", exc)
 
     def android_show_over_lockscreen(show):
-        """Draw above the lock screen and turn the display on (or undo the
-        keep-awake part). The creation-time half of this lives in
-        android_src/.../RedAlarmApplication.java."""
+        """Enable lock-screen visibility only for an actively ringing alarm."""
         _apply_lockscreen_flags(show)
 
     def android_copy_content_uri_to_file(uri_string, dest_path):
@@ -534,6 +534,111 @@ if ANDROID:
         manager = cast("android.app.NotificationManager",
                         context.getSystemService(Context.NOTIFICATION_SERVICE))
         manager.cancel(_RING_NOTIF_ID)
+
+    # Separate from the temporary ring/snooze notification (ID 1002). This
+    # ongoing notification remains posted while a future alarm is scheduled.
+    _NEXT_ALARM_CHANNEL_ID = "redalarm_next_alarm_v1"
+    _NEXT_ALARM_NOTIF_ID = 1001
+
+    def android_ensure_next_alarm_channel():
+        if BuildVersion.SDK_INT < 26:
+            return
+        NotificationManager = autoclass("android.app.NotificationManager")
+        NotificationChannel = autoclass("android.app.NotificationChannel")
+        Notification = autoclass("android.app.Notification")
+        context = _activity().getApplicationContext()
+        manager = cast("android.app.NotificationManager",
+                       context.getSystemService(Context.NOTIFICATION_SERVICE))
+        channel = NotificationChannel(
+            JString(_NEXT_ALARM_CHANNEL_ID), JString("Next scheduled alarm"),
+            NotificationManager.IMPORTANCE_LOW,
+        )
+        channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC)
+        channel.enableVibration(False)
+        try:
+            channel.setSound(None, None)
+        except Exception:
+            pass
+        manager.createNotificationChannel(channel)
+
+    def android_show_next_alarm_notification(alarm_id, trigger_dt, label):
+        """Post/update a persistent lock-screen-visible countdown preview."""
+        try:
+            context = _activity().getApplicationContext()
+            Notification = autoclass("android.app.Notification")
+            AndroidR_drawable = autoclass("android.R$drawable")
+            seconds_left = max(0.0, (trigger_dt - datetime.datetime.now()).total_seconds())
+            total_minutes = int(math.ceil(seconds_left / 60.0))
+            hours, minutes = divmod(total_minutes, 60)
+            eta_text = "Your next alarm in {} hr {} min".format(hours, minutes)
+            alarm_time = trigger_dt.strftime("%I:%M %p").lstrip("0")
+            alarm_label = (str(label or "Alarm").strip() or "Alarm")
+
+            open_intent = Intent(context, PythonActivity)
+            open_intent.setAction("com.redalarm.OPEN_NEXT_ALARM")
+            open_intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                 | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                                 | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            pending_flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            open_pi = PendingIntent.getActivity(
+                _activity(), stable_request_code("redalarm-next-alarm", "open"),
+                open_intent, pending_flags,
+            )
+
+            if BuildVersion.SDK_INT >= 26:
+                builder = autoclass("android.app.Notification$Builder")(
+                    context, JString(_NEXT_ALARM_CHANNEL_ID)
+                )
+            else:
+                builder = autoclass("android.app.Notification$Builder")(context)
+                builder.setPriority(1)  # PRIORITY_LOW
+
+            builder.setContentTitle(JString("RedAlarm • Next alarm"))
+            builder.setContentText(JString(eta_text))
+            builder.setSubText(JString("{} • {}".format(alarm_label, alarm_time)))
+            builder.setSmallIcon(AndroidR_drawable.ic_lock_idle_alarm)
+            builder.setContentIntent(open_pi)
+            builder.setCategory(Notification.CATEGORY_ALARM)
+            builder.setVisibility(Notification.VISIBILITY_PUBLIC)
+            builder.setWhen(int(trigger_dt.timestamp() * 1000))
+            builder.setShowWhen(True)
+            # Android keeps the displayed countdown moving while the Python
+            # process is backgrounded or temporarily reclaimed.
+            builder.setUsesChronometer(True)
+            if BuildVersion.SDK_INT >= 24:
+                builder.setChronometerCountDown(True)
+            builder.setOngoing(True)
+            builder.setAutoCancel(False)
+            builder.setOnlyAlertOnce(True)
+            try:
+                style = autoclass("android.app.Notification$BigTextStyle")()
+                style.bigText(JString("{}\n{} • {}".format(eta_text, alarm_label, alarm_time)))
+                builder.setStyle(style)
+            except Exception:
+                pass
+
+            notification = builder.build()
+            notification.flags = (
+                int(notification.flags)
+                | int(Notification.FLAG_NO_CLEAR)
+                | int(Notification.FLAG_ONGOING_EVENT)
+            )
+            manager = cast("android.app.NotificationManager",
+                           context.getSystemService(Context.NOTIFICATION_SERVICE))
+            manager.notify(_NEXT_ALARM_NOTIF_ID, notification)
+        except Exception as exc:
+            # In particular, Android 13+ may reject this until the user grants
+            # POST_NOTIFICATIONS. The next refresh retries after permission is granted.
+            print("[RedAlarm] next-alarm notification error:", exc)
+
+    def android_cancel_next_alarm_notification():
+        try:
+            context = _activity().getApplicationContext()
+            manager = cast("android.app.NotificationManager",
+                           context.getSystemService(Context.NOTIFICATION_SERVICE))
+            manager.cancel(_NEXT_ALARM_NOTIF_ID)
+        except Exception as exc:
+            print("[RedAlarm] next-alarm notification cancel error:", exc)
 
     def android_show_snoozed_notification(alarm_id, next_trigger):
         """Keep a visible notification showing when the snoozed alarm will ring."""
@@ -1413,6 +1518,7 @@ class AlarmListScreen(Screen):
             app.scheduler.schedule(alarm)
         else:
             app.scheduler.cancel(alarm)
+        app.refresh_next_alarm_notification()
 
     def confirm_delete(self, alarm_id):
         app = App.get_running_app()
@@ -1426,6 +1532,7 @@ class AlarmListScreen(Screen):
             if ring.alarm_id == alarm_id:
                 ring.finish(reason="delete")
             app.store.delete(alarm_id)
+            app.refresh_next_alarm_notification()
             popup.dismiss()
             self.refresh()
 
@@ -1770,6 +1877,7 @@ class AlarmEditScreen(Screen):
         if ring.alarm_id == self.editing_id:
             ring.finish(reason="delete")
         app.store.delete(self.editing_id)
+        app.refresh_next_alarm_notification()
         app.root.current = "list"
 
     def _fail(self, message):
@@ -1907,6 +2015,7 @@ class AlarmEditScreen(Screen):
         app.scheduler.cancel(alarm)
         app.scheduler.cancel_snooze(alarm)
         trigger_dt = app.scheduler.schedule(alarm)
+        app.refresh_next_alarm_notification()
         print("[RedAlarm] alarm saved:", alarm.get("id"), "next trigger:", trigger_dt,
               "new:", is_new_alarm)
         self._show_alarm_confirmation(alarm, trigger_dt)
@@ -2090,6 +2199,7 @@ class AlarmRingScreen(Screen):
         self.countdown_text = ""
         app.root.current = "home"
 
+        app.refresh_next_alarm_notification()
         if keep_snooze_notification and snooze_trigger and ANDROID:
             try:
                 android_show_snoozed_notification(current_alarm_id, snooze_trigger)
@@ -2189,6 +2299,10 @@ class RedAlarmApp(App):
             except Exception as exc:
                 print("[RedAlarm] notification channel error:", exc)
             try:
+                android_ensure_next_alarm_channel()
+            except Exception as exc:
+                print("[RedAlarm] next-alarm notification channel error:", exc)
+            try:
                 android_request_runtime_permissions()
             except Exception as exc:
                 print("[RedAlarm] permission request error:", exc)
@@ -2202,6 +2316,12 @@ class RedAlarmApp(App):
                     # it in this list from being armed too.
                     print("[RedAlarm] could not schedule alarm {}: {}"
                           .format(alarm.get("id"), exc))
+
+        if ANDROID:
+            self._refresh_next_alarm_notification()
+            self._next_alarm_notification_event = Clock.schedule_interval(
+                self._refresh_next_alarm_notification, 60.0
+            )
 
         self._check_incoming_alarm()
         queued, self._queued_intents = self._queued_intents, []
@@ -2325,6 +2445,41 @@ class RedAlarmApp(App):
         self._perm_popup = popup
         popup.open()
 
+    def _refresh_next_alarm_notification(self, _dt=None):
+        """Keep the persistent notification aligned with the earliest pending trigger."""
+        if not ANDROID or not self._ready:
+            return
+        try:
+            now = datetime.datetime.now()
+            pending = getattr(getattr(self, "scheduler", None), "_pending", {})
+            candidates = []
+            for pending_key, entry in list(pending.items()):
+                try:
+                    alarm_id, trigger_dt = entry
+                    if trigger_dt <= now:
+                        continue
+                    alarm = self.store.get(alarm_id)
+                    if not alarm:
+                        continue
+                    is_snooze = str(pending_key).endswith("snooze")
+                    if not is_snooze and not bool(alarm.get("enabled", True)):
+                        continue
+                    label = (str(alarm.get("label") or "Alarm").strip() or "Alarm")
+                    candidates.append((trigger_dt, alarm_id, label))
+                except Exception as exc:
+                    print("[RedAlarm] skipping invalid pending notification trigger:", exc)
+            if not candidates:
+                android_cancel_next_alarm_notification()
+                return
+            trigger_dt, alarm_id, label = min(candidates, key=lambda item: item[0])
+            android_show_next_alarm_notification(alarm_id, trigger_dt, label)
+        except Exception as exc:
+            print("[RedAlarm] next-alarm notification refresh error:", exc)
+
+    def refresh_next_alarm_notification(self):
+        """Public hook for alarm creation, toggles, edits, and dismiss/snooze."""
+        self._refresh_next_alarm_notification()
+
     def on_resume(self):
         # Fires when Android brings this activity back to the foreground —
         # including when AlarmManager relaunches it while the app was only
@@ -2333,6 +2488,7 @@ class RedAlarmApp(App):
         if not self._ready:
             return
         self._check_incoming_alarm()
+        self._refresh_next_alarm_notification()
         if self._perm_popup is not None:
             self._perm_popup.refresh()
         if self.root.current == "list":
@@ -2443,6 +2599,7 @@ class RedAlarmApp(App):
         ring = self.root.get_screen("ring")
         ring.start_ringing(alarm)
         self.root.current = "ring"
+        self._refresh_next_alarm_notification()
 
     def on_stop(self):
         if self._ready:

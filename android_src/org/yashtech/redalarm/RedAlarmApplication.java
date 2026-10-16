@@ -2,28 +2,20 @@ package org.yashtech.redalarm;
 
 import android.app.Activity;
 import android.app.Application;
+import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.WindowManager;
 
 /**
- * Makes RedAlarm's activity eligible to appear over the LOCK SCREEN and to
- * turn the screen on, from the moment it is created.
+ * Enable lock-screen visibility only when Android creates the activity for a
+ * real alarm launch. Normal Home/clock/editor launches must remain behind the
+ * keyguard. Dismiss/Snooze notification actions also must not reveal the app.
  *
- * Why this exists: when an activity is started while the phone is locked,
- * Android keeps it in the stopped state (hidden behind the keyguard) unless
- * showWhenLocked is already set. Setting it later from Python (after the
- * activity has already been resumed/stopped) is too late, which is why the
- * alarm screen only appeared after unlocking. This is the code equivalent
- * of android:showWhenLocked / android:turnScreenOn in the manifest (p4a's
- * manifest template has no hook for activity attributes, but it does let us
- * set the <application> class — see extra_manifest_application_arguments.xml).
- *
- * It deliberately does NOT call requestDismissKeyguard(): the alarm screen
- * is shown OVER a secure lock screen, so Dismiss/Snooze work without a PIN.
+ * A cold-start alarm needs these flags during Activity creation; setting them
+ * only later from Python can be too late for Android to display it over lock.
  */
 public class RedAlarmApplication extends Application {
-
     @Override
     public void onCreate() {
         super.onCreate();
@@ -31,16 +23,25 @@ public class RedAlarmApplication extends Application {
             @Override
             public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
                 try {
+                    Intent intent = activity.getIntent();
+                    String alarmId = intent == null ? null : intent.getStringExtra("alarm_id");
+                    String actionKind = intent == null ? null : intent.getStringExtra("action_kind");
+                    boolean isAlarmLaunch = alarmId != null && actionKind == null;
+
                     if (Build.VERSION.SDK_INT >= 27) {
-                        activity.setShowWhenLocked(true);
-                        activity.setTurnScreenOn(true);
-                    } else {
+                        activity.setShowWhenLocked(isAlarmLaunch);
+                        activity.setTurnScreenOn(isAlarmLaunch);
+                    } else if (isAlarmLaunch) {
                         activity.getWindow().addFlags(
+                                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                                        | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+                    } else {
+                        activity.getWindow().clearFlags(
                                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                                         | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
                     }
                 } catch (Throwable ignored) {
-                    // never let a lock-screen nicety crash app startup
+                    // Never let lock-screen setup crash application startup.
                 }
             }
 
