@@ -1,6 +1,7 @@
 [app]
 
 title = RedAlarm
+icon.filename = %(source.dir)s/redalarm_icon.png
 package.name = redalarm
 package.domain = org.yashtech
 
@@ -13,6 +14,11 @@ version = 1.0.0
 requirements = python3==3.11.6,hostpython3==3.11.6,kivy==2.3.1,plyer,filetype
 
 orientation = portrait
+
+# Native Android splash colour shown before Python even starts, so there
+# is no white flash - it matches the in-app RedAlarm splash.
+presplash.filename = %(source.dir)s/presplash2.png
+android.presplash_color = #000000
 fullscreen = 0
 
 # API 34 is a safer target for the current python-for-android toolchain.
@@ -27,19 +33,29 @@ android.archs = arm64-v8a
 #                                    alarm fires at the exact minute
 # REQUEST_IGNORE_BATTERY_OPTIMIZATIONS -> lets the in-app banner open the
 #                                    "don't optimize this app" screen
-# POST_NOTIFICATIONS               -> required on API 33+ for the
-#                                    permanent "next alarm" notification
+# POST_NOTIFICATIONS               -> required on API 33+ to show the
+#                                    alarm-ringing (Dismiss/Snooze) notification
+# USE_FULL_SCREEN_INTENT          -> lets the ringing notification launch the
+#                                    alarm screen over the lock screen
+# VIBRATE                          -> per-alarm vibration
 # SYSTEM_ALERT_WINDOW               -> "display over other apps"; some OEM
 #                                    skins (MIUI/ColorOS/etc.) want this
 #                                    granted before they'll let a
 #                                    backgrounded app pop an activity
-android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,POST_NOTIFICATIONS,SYSTEM_ALERT_WINDOW
+android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,POST_NOTIFICATIONS,SYSTEM_ALERT_WINDOW,VIBRATE,USE_FULL_SCREEN_INTENT,RECEIVE_BOOT_COMPLETED
 
 # CRITICAL for alarms: without this, Android stacks a new copy of the
 # activity on top every time AlarmManager fires while the app is already
 # open, instead of reusing the one instance and routing it through
 # onNewIntent (which is what main.py's android.activity.bind hook needs).
 android.manifest.launch_mode = singleTask
+
+# Lock-screen alarm: a tiny Application class (android_src/...) sets
+# showWhenLocked + turnScreenOn on every activity at creation time, and the
+# manifest <application> tag is pointed at it. See RedAlarmApplication.java.
+android.add_src = java_src,android_src
+p4a.hook = java_src/manifest_hook.py
+android.extra_manifest_application_arguments = ./extra_manifest_application_arguments.xml
 
 android.accept_sdk_license = True
 
