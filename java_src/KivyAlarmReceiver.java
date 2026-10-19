@@ -27,16 +27,27 @@ import java.util.Locale;
 public class KivyAlarmReceiver extends BroadcastReceiver {
     private static final int NEXT_NOTIFICATION_ID = 1001;
     private static final String NEXT_CHANNEL_ID = "redalarm_next_alarm_v1";
+    private static final String ACTION_FIRE_ALARM = "com.redalarm.FIRE_ALARM";
+    private static final String ACTION_REFRESH_SCHEDULES = "com.redalarm.REFRESH_SCHEDULES";
 
     @Override public void onReceive(Context context, Intent intent) {
         if (intent == null) return;
         String action = intent.getAction();
         if (action == null) return;
+        Context appContext = context.getApplicationContext();
+        if (ACTION_FIRE_ALARM.equals(action)) {
+            fireAlarmAndStartService(appContext, intent);
+            return;
+        }
+        if (ACTION_REFRESH_SCHEDULES.equals(action)) {
+            restoreSchedules(appContext);
+            return;
+        }
         if (!Intent.ACTION_BOOT_COMPLETED.equals(action)
                 && !Intent.ACTION_TIME_CHANGED.equals(action)
                 && !Intent.ACTION_TIMEZONE_CHANGED.equals(action)
                 && !Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) return;
-        restoreSchedules(context.getApplicationContext());
+        restoreSchedules(appContext);
     }
 
     private static File appDataFile(Context context, String filename) {
@@ -71,15 +82,15 @@ public class KivyAlarmReceiver extends BroadcastReceiver {
 
     private static PendingIntent firePendingIntent(Context context, String alarmId,
                                                     String salt, long triggerAt) {
-        Intent fire = new Intent(context, PythonActivity.class);
-        fire.setAction("com.redalarm.FIRE_" + alarmId);
-        fire.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        Intent fire = new Intent(context, KivyAlarmReceiver.class);
+        fire.setAction(ACTION_FIRE_ALARM);
         fire.putExtra("alarm_id", alarmId);
         fire.putExtra("fire_token", Long.toString(triggerAt));
+        fire.putExtra("fire_at", triggerAt);
+        fire.putExtra("alarm_salt", salt == null ? "" : salt);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= 23) flags |= PendingIntent.FLAG_IMMUTABLE;
-        return PendingIntent.getActivity(context, stableRequestCode(alarmId, salt), fire, flags);
+        return PendingIntent.getBroadcast(context, stableRequestCode(alarmId, salt), fire, flags);
     }
 
     private static PendingIntent alarmShowIntent(Context context, String alarmId) {
@@ -201,6 +212,129 @@ public class KivyAlarmReceiver extends BroadcastReceiver {
         } catch (Exception exc) {
             android.util.Log.e("RedAlarm", "Native alarm restore failed", exc);
         }
+    }
+
+    private static void fireAlarmAndStartService(Context context, Intent intent) {
+        String alarmId = intent.getStringExtra("alarm_id");
+        String salt = intent.getStringExtra("alarm_salt");
+        if (salt == null) salt = "";
+        if (alarmId == null || alarmId.trim().isEmpty()) return;
+        try {
+            File alarmsFile = appDataFile(context, "alarms.json");
+            String raw = readText(alarmsFile);
+            if (raw == null) return;
+            JSONArray array = new JSONArray(raw);
+            JSONObject alarm = null;
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject candidate = array.optJSONObject(i);
+                if (candidate != null && alarmId.equals(candidate.optString("id", ""))) {
+                    alarm = candidate;
+                    break;
+                }
+            }
+            if (alarm == null) return;
+            boolean isSnooze = "snooze".equals(salt);
+            if (!alarm.optBoolean("enabled", true) && !isSnooze) return;
+
+            long now = System.currentTimeMillis();
+            JSONArray days = alarm.optJSONArray("days");
+            boolean repeats = false;
+            if (days != null) {
+                for (int i = 0; i < Math.min(7, days.length()); i++) {
+                    repeats |= days.optBoolean(i, false);
+                }
+            }
+            // Re-arm repeating alarms before audio starts so Activity startup latency
+            // cannot lose the next occurrence. Use the same PendingIntent identity as Python.
+            if (!isSnooze && repeats) {
+                long next = nextTrigger(alarm, now + 30000L);
+                if (next > now) {
+                    AlarmManager manager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+                    PendingIntent fire = firePendingIntent(context, alarmId, "", next);
+                    manager.setAlarmClock(new AlarmManager.AlarmClockInfo(next,
+                            alarmShowIntent(context, alarmId)), fire);
+                }
+            }
+            if (isSnooze) removeSnoozeEntry(context, alarmId);
+
+            JSONObject config = new JSONObject();
+            String appRoot = new File(context.getFilesDir(), "app").getAbsolutePath();
+            String statePath = new File(context.getFilesDir(), "ring_service_state.json").getAbsolutePath();
+            String configPath = statePath + ".config";
+            String stopPath = new File(context.getFilesDir(), "ring_service_stop.json").getAbsolutePath();
+            String label = alarm.optString("label", "Alarm").trim();
+            if (label.isEmpty()) label = "Alarm";
+            int hour = alarm.optInt("hour", 7) % 24;
+            int minute = alarm.optInt("minute", 0) % 60;
+            int hour12 = hour % 12;
+            if (hour12 == 0) hour12 = 12;
+            String ampm = hour >= 12 ? "PM" : "AM";
+            String timeText = String.format(Locale.getDefault(), "%02d:%02d %s", hour12, minute, ampm);
+            String sound = alarm.optString("sound_path", "");
+            if (sound == null) sound = "";
+            config.put("alarm_id", alarmId);
+            config.put("title", label);
+            config.put("time_text", timeText);
+            config.put("sound_path", sound);
+            config.put("fallback_path", new File(appRoot, "ringtones/default_alarm.wav").getAbsolutePath());
+            config.put("logo_path", new File(appRoot, "splashimage.png").getAbsolutePath());
+            config.put("clip_start_ms", Math.max(0, alarm.optInt("clip_start_ms", 0)));
+            config.put("clip_duration_ms", Math.max(0, alarm.optInt("clip_duration_ms", 0)));
+            config.put("duration_sec", Math.max(1, Math.min(10800, alarm.optInt("auto_dismiss_sec", 5))));
+            config.put("volume", Math.max(0.0, Math.min(1.0, alarm.optDouble("volume", 0.80))));
+            config.put("vibrate", alarm.optBoolean("vibrate", false));
+            config.put("alarms_path", alarmsFile.getAbsolutePath());
+            config.put("disable_one_time_on_auto", !repeats);
+            config.put("state_path", statePath);
+            config.put("config_path", configPath);
+            config.put("stop_path", stopPath);
+            // Remove stale state from the last ring and persist the sticky-service request.
+            new File(statePath).delete();
+            new File(stopPath).delete();
+            writeTextAtomically(new File(configPath), config.toString());
+            Class<?> serviceClass = Class.forName(context.getPackageName() + ".ServiceRing");
+            serviceClass.getMethod("start", Context.class, String.class).invoke(null, context, config.toString());
+        } catch (Exception exc) {
+            android.util.Log.e("RedAlarm", "Native alarm service launch failed", exc);
+            // Last-resort compatibility fallback; Android may decline this background Activity.
+            try {
+                Intent launch = new Intent(context, PythonActivity.class);
+                launch.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                launch.putExtra("alarm_id", alarmId);
+                launch.putExtra("fire_token", intent.getStringExtra("fire_token"));
+                context.startActivity(launch);
+            } catch (Exception launchError) {
+                android.util.Log.e("RedAlarm", "Activity fallback after service failure also failed", launchError);
+            }
+        }
+    }
+
+    private static void removeSnoozeEntry(Context context, String alarmId) {
+        try {
+            File file = appDataFile(context, "snooze_state.json");
+            String raw = readText(file);
+            if (raw == null) return;
+            JSONObject state = new JSONObject(raw);
+            state.remove(alarmId);
+            writeTextAtomically(file, state.toString());
+        } catch (Exception exc) {
+            android.util.Log.w("RedAlarm", "Could not clear fired snooze entry", exc);
+        }
+    }
+
+    private static void writeTextAtomically(File target, String value) throws Exception {
+        File parent = target.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            throw new java.io.IOException("Cannot create " + parent);
+        }
+        File temporary = new File(target.getAbsolutePath() + ".native.tmp");
+        try (java.io.FileWriter writer = new java.io.FileWriter(temporary, false)) {
+            writer.write(value);
+            writer.flush();
+        }
+        if (target.exists() && !target.delete()) throw new java.io.IOException("Cannot replace " + target);
+        if (!temporary.renameTo(target)) throw new java.io.IOException("Cannot rename temporary file to " + target);
     }
 
     private static void showNextNotification(Context context, NextAlarm alarm) {

@@ -29,6 +29,7 @@ from kivy.uix.widget import Widget
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.graphics import Color, Ellipse, Line, RoundedRectangle, Rectangle, Triangle
+from spinner_physics import VelocityTracker, advance_fling
 
 BG = (0.014, 0.014, 0.017, 1)
 CARD = (0.045, 0.045, 0.051, 1)
@@ -370,8 +371,9 @@ class SpinnerWheel(Widget):
         self.row_height = dp(56)
         # Samsung-like response: a short drag advances the wheel naturally;
         # stronger damping prevents a fast flick from racing through values.
-        self.drag_sensitivity = 1.75
-        self.max_fling_velocity = 4.20
+        # Strong but controllable movement with a separately sampled flick speed.
+        self.drag_sensitivity = 2.20
+        self.max_fling_velocity = 36.0
         if selected_value not in self.values:
             selected_value = self.values[0]
         self._active_value = selected_value
@@ -384,6 +386,7 @@ class SpinnerWheel(Widget):
         self._last_y = 0
         self._last_motion_at = time.monotonic()
         self._velocity = 0.0
+        self._velocity_tracker = VelocityTracker(max_velocity=self.max_fling_velocity)
         self._fling_event = None
         self._settle_animation = None
         self._ready = False
@@ -514,6 +517,7 @@ class SpinnerWheel(Widget):
         self._last_y = touch.y
         self._last_motion_at = time.monotonic()
         self._velocity = 0.0
+        self._velocity_tracker.reset(self._last_motion_at, self.position)
         touch.grab(self)
         return True
 
@@ -521,17 +525,11 @@ class SpinnerWheel(Widget):
         if touch.grab_current is not self or touch is not self._touch:
             return super().on_touch_move(touch)
         now = time.monotonic()
-        dt = max(0.001, now - self._last_motion_at)
         delta_rows = ((touch.y - self._last_y) / self.row_height) * self.drag_sensitivity
         self._set_position(self.position + delta_rows)
-        # Blend velocity samples and cap peak fling speed so quick mouse/touch
-        # events don't send the wheel racing past several values.
-        instantaneous = delta_rows / dt
-        estimate = self._velocity * 0.58 + instantaneous * 0.42
-        self._velocity = max(
-            -self.max_fling_velocity,
-            min(self.max_fling_velocity, estimate),
-        )
+        # Use recent motion over time: dropped touch events don't kill a real flick,
+        # and one noisy event doesn't launch the wheel at maximum speed.
+        self._velocity = self._velocity_tracker.add(now, self.position)
         self._last_y = touch.y
         self._last_motion_at = now
         return True
@@ -549,12 +547,16 @@ class SpinnerWheel(Widget):
         self._touch = None
         self._dragging = False
         is_tap = abs(touch.y - self._touch_start_y) < dp(8)
-        if not self.wrap and is_tap:
-            target = self._bounded(self._round_index(self.position + (self.center_y - touch.y) / self.row_height))
+        if is_tap:
+            # Every visible row can be tapped; the selection glides into the band.
+            offset = (self.center_y - touch.y) / max(1.0, self.row_height)
+            target = self._bounded(self._round_index(self.position + offset))
+            self._velocity = 0.0
+            self._velocity_tracker.reset(time.monotonic(), target)
             Animation.cancel_all(self, "position")
-            Animation(position=float(target), duration=0.34, t="out_cubic").start(self)
+            Animation(position=float(target), duration=0.20, t="out_cubic").start(self)
             return True
-        if abs(self._velocity) > 1.15:
+        if abs(self._velocity) > 0.58:
             self._fling_event = Clock.schedule_interval(self._fling_step, 1.0 / 60.0)
         else:
             self._start_settle()
@@ -564,9 +566,10 @@ class SpinnerWheel(Widget):
         if self._dragging:
             self._fling_event = None
             return False
-        dt = min(float(dt), 0.04)
-        # Moderate friction allows a satisfying flick, then a gradual slowdown.
-        next_pos = self.position + self._velocity * dt
+        # Frame-safe motion with a long glide, even after a dropped UI frame.
+        next_pos, next_velocity, stopped = advance_fling(
+            self.position, self._velocity, dt, friction=2.6, stop_velocity=0.20
+        )
         if not self.wrap:
             bounded = self._bounded(next_pos)
             if abs(bounded - next_pos) > 0.000001:
@@ -576,8 +579,8 @@ class SpinnerWheel(Widget):
                 self._start_settle()
                 return False
         self._set_position(next_pos)
-        self._velocity *= math.exp(-4.70 * dt)
-        if abs(self._velocity) < 0.42:
+        self._velocity = next_velocity
+        if stopped:
             self._fling_event = None
             self._start_settle()
             return False
@@ -590,7 +593,7 @@ class SpinnerWheel(Widget):
         Animation.cancel_all(self, "position")
         target = self._bounded(self._round_index(self.position))
         # Settle reliably after the flick; a short snap prevents the dial lingering.
-        animation = Animation(position=float(target), duration=0.32, t="out_cubic")
+        animation = Animation(position=float(target), duration=0.22, t="out_cubic")
         self._settle_animation = animation
         animation.start(self)
 

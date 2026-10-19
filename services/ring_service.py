@@ -47,9 +47,10 @@ def _make_pending_intent(context, alarm_id, kind=None):
 
     intent = Intent(context, PythonActivity)
     if kind is None:
-        intent.setAction("com.redalarm.FIRE_" + alarm_id)
+        intent.setAction("com.redalarm.RING_UI_" + alarm_id)
+        intent.putExtra("action_kind", JString("service_ring"))
         salt = "ring_tap"
-        nonce = "tap" + str(int(time.time() * 1000))
+        nonce = "ui" + str(int(time.time() * 1000))
     else:
         intent.setAction("com.redalarm.{}_{}".format(kind.upper(), alarm_id))
         intent.putExtra("action_kind", JString(kind))
@@ -66,6 +67,37 @@ def _make_pending_intent(context, alarm_id, kind=None):
     return PendingIntent.getActivity(
         context, _stable_request_code(alarm_id, salt), intent, flags
     )
+
+
+def _disable_one_time_alarm(config):
+    """Disable a one-shot alarm after service-owned auto-dismiss, even without Activity."""
+    alarms_path = str(config.get("alarms_path") or "")
+    alarm_id = str(config.get("alarm_id") or "")
+    if not alarms_path or not alarm_id or not config.get("disable_one_time_on_auto"):
+        return False
+    try:
+        with open(alarms_path, "r", encoding="utf-8") as source:
+            alarms = json.load(source)
+        changed = False
+        for alarm in alarms:
+            if not isinstance(alarm, dict) or str(alarm.get("id") or "") != alarm_id:
+                continue
+            if any(alarm.get("days") or []):
+                return False
+            if alarm.get("enabled", True):
+                alarm["enabled"] = False
+                changed = True
+            break
+        if not changed:
+            return False
+        temporary = alarms_path + ".ring-service.tmp"
+        with open(temporary, "w", encoding="utf-8") as output:
+            json.dump(alarms, output, ensure_ascii=False, indent=2)
+        os.replace(temporary, alarms_path)
+        return True
+    except Exception as exc:
+        print("[RedAlarm service] could not disable completed one-shot alarm:", exc)
+        return False
 
 
 def _make_alarm_notification(service, config):
@@ -89,7 +121,7 @@ def _make_alarm_notification(service, config):
     )
 
 
-def _new_player(context, path, clip_start_ms=0, clip_duration_ms=0):
+def _new_player(context, path, clip_start_ms=0, clip_duration_ms=0, volume=0.80):
     MediaPlayer = autoclass("android.media.MediaPlayer")
     AudioAttributes = autoclass("android.media.AudioAttributes")
     PowerManager = autoclass("android.os.PowerManager")
@@ -122,6 +154,11 @@ def _new_player(context, path, clip_start_ms=0, clip_duration_ms=0):
         player.setLooping(clip_ms <= 0)
         if clip_ms > 0:
             player.seekTo(start_ms)
+        try:
+            level = max(0.0, min(1.0, float(volume)))
+        except (TypeError, ValueError):
+            level = 0.80
+        player.setVolume(level, level)
         player.start()
         return player, start_ms, (start_ms + clip_ms if clip_ms > 0 else 0)
     except Exception:
@@ -169,7 +206,8 @@ def main():
     config_path = str(config.get("config_path") or (state_path + ".config" if state_path else ""))
     stop_path = str(config.get("stop_path") or (os.path.join(os.path.dirname(state_path), "ring_service_stop.json") if state_path else ""))
     duration = max(1, int(config.get("duration_sec") or 300))
-    deadline_epoch = float(config.get("deadline_epoch") or (time.time() + duration))
+    # Calculated only once MediaPlayer has successfully started below.
+    deadline_epoch = None
     player = None
     clip_start_position_ms = 0
     clip_end_position_ms = 0
@@ -194,7 +232,7 @@ def main():
             if path and os.path.isfile(path):
                 try:
                     player, clip_start_position_ms, clip_end_position_ms = _new_player(
-                        context, path, start_ms, clip_ms
+                        context, path, start_ms, clip_ms, config.get("volume", 0.80)
                     )
                     print("[RedAlarm service] playing:", path,
                           "segment_start_ms=", clip_start_position_ms,
@@ -206,6 +244,22 @@ def main():
         if player is None:
             raise RuntimeError("No ringtone could be played: {}".format(last_error))
 
+        # Start the auto-dismiss duration after actual MediaPlayer playback begins.
+        deadline_epoch = time.time() + duration
+        if config.get("vibrate"):
+            try:
+                Context = autoclass("android.content.Context")
+                vibrator = service.getSystemService(Context.VIBRATOR_SERVICE)
+                if vibrator is not None and vibrator.hasVibrator():
+                    pattern = [0, 800, 500]
+                    BuildVersion = autoclass("android.os.Build$VERSION")
+                    if BuildVersion.SDK_INT >= 26:
+                        VibrationEffect = autoclass("android.os.VibrationEffect")
+                        vibrator.vibrate(VibrationEffect.createWaveform(pattern, 1))
+                    else:
+                        vibrator.vibrate(pattern, 1)
+            except Exception as exc:
+                print("[RedAlarm service] vibration start failed:", exc)
         # Signal only after MediaPlayer.prepare/start succeeded; main.py waits
         # for this marker instead of assuming ServiceRing.start means audio began.
         _write_state(state_path, alarm_id, "started")
@@ -231,9 +285,18 @@ def main():
                 except Exception as exc:
                     print("[RedAlarm service] clip loop seek failed:", exc)
             time.sleep(0.12)
-        if time.time() >= deadline_epoch:
+        if deadline_epoch is not None and time.time() >= deadline_epoch:
             timed_out = True
             _write_state(state_path, alarm_id, "auto")
+            if _disable_one_time_alarm(config):
+                try:
+                    Intent = autoclass("android.content.Intent")
+                    Receiver = autoclass("org.kivy.android.KivyAlarmReceiver")
+                    refresh = Intent(service.getApplicationContext(), Receiver)
+                    refresh.setAction("com.redalarm.REFRESH_SCHEDULES")
+                    service.sendBroadcast(refresh)
+                except Exception as exc:
+                    print("[RedAlarm service] could not refresh native alarm schedules:", exc)
         try:
             Context = autoclass("android.content.Context")
             vibrator = service.getSystemService(Context.VIBRATOR_SERVICE)

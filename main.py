@@ -257,6 +257,32 @@ if ANDROID:
         flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         return PendingIntent.getActivity(_activity(), request_code, intent, flags)
 
+    def _alarm_fire_pending_intent(alarm_id, request_code, fire_token=None, salt=""):
+        """Broadcast-based fire PendingIntent; works without a live Python Activity."""
+        Receiver = autoclass("org.kivy.android.KivyAlarmReceiver")
+        intent = Intent(_activity().getApplicationContext(), Receiver)
+        intent.setAction("com.redalarm.FIRE_ALARM")
+        intent.putExtra("alarm_id", JString(alarm_id))
+        if fire_token is not None:
+            intent.putExtra("fire_token", JString(str(fire_token)))
+        intent.putExtra("alarm_salt", JString(str(salt or "")))
+        flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        return PendingIntent.getBroadcast(_activity(), request_code, intent, flags)
+
+    def _ring_ui_pending_intent(alarm_id):
+        """Content/FSI tap should attach UI to the running service, not start audio twice."""
+        intent = Intent(_activity().getApplicationContext(), PythonActivity)
+        intent.setAction("com.redalarm.RING_UI_" + str(alarm_id))
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        intent.putExtra("alarm_id", JString(alarm_id))
+        intent.putExtra("fire_token", JString("ui" + str(int(time.time() * 1000))))
+        intent.putExtra("action_kind", JString("service_ring"))
+        flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        return PendingIntent.getActivity(
+            _activity(), stable_request_code(alarm_id, "ring_tap"), intent, flags
+        )
+
     def _alarm_show_pending_intent(alarm_id):
         """Open the app without carrying the actual alarm-fire extras."""
         intent = Intent(_activity().getApplicationContext(), PythonActivity)
@@ -272,7 +298,7 @@ if ANDROID:
     def android_schedule_alarm(alarm_id, trigger_dt, salt=""):
         request_code = stable_request_code(alarm_id, salt)
         fire_token = int(trigger_dt.timestamp() * 1000)
-        pending_intent = _alarm_pending_intent(alarm_id, request_code, fire_token)
+        pending_intent = _alarm_fire_pending_intent(alarm_id, request_code, fire_token, salt)
         manager = _alarm_manager()
         # Snoozes are exact but should not create a second system alarm-clock icon.
         if salt == "snooze":
@@ -287,7 +313,7 @@ if ANDROID:
         request_code = stable_request_code(alarm_id, salt)
         # Extras don't matter for cancellation — only action/component/
         # request-code need to match the PendingIntent being cancelled.
-        pending_intent = _alarm_pending_intent(alarm_id, request_code)
+        pending_intent = _alarm_fire_pending_intent(alarm_id, request_code, salt=salt)
         _alarm_manager().cancel(pending_intent)
 
     def android_can_schedule_exact_alarms():
@@ -392,14 +418,22 @@ if ANDROID:
         backends want a plain file path, so copy the bytes once."""
         resolver = _activity().getContentResolver()
         input_stream = resolver.openInputStream(Uri.parse(uri_string))
-        buf = bytearray(4096)
-        with open(dest_path, "wb") as f:
-            while True:
-                n = input_stream.read(buf)
-                if n == -1:
-                    break
-                f.write(bytes(buf[:n]))
-        input_stream.close()
+        if input_stream is None:
+            raise IOError("Android could not open the selected audio URI")
+        buf = bytearray(16384)
+        try:
+            with open(dest_path, "wb") as f:
+                while True:
+                    n = input_stream.read(buf)
+                    if n == -1:
+                        break
+                    if n > 0:
+                        f.write(bytes(buf[:n]))
+        finally:
+            try:
+                input_stream.close()
+            except Exception:
+                pass
         return dest_path
 
     def android_take_persistable_permission(uri_string):
@@ -430,32 +464,61 @@ if ANDROID:
     # Android (plyer's filechooser is flaky across OEM skins/API levels;
     # this gives full control and plain Android APIs only) --------------
     _OPEN_DOCUMENT_REQUEST_CODE = 9001
+    _open_document_in_progress = [False]
 
     def android_pick_audio_file(on_result):
-        """on_result(uri_string_or_None) runs on the Kivy thread."""
+        """Open the Android SAF picker and always unbind the result callback."""
+        if _open_document_in_progress[0]:
+            raise RuntimeError("The audio picker is already open")
+        _open_document_in_progress[0] = True
+        callback_bound = [False]
+        finished = [False]
+
+        def _unbind_callback():
+            if callback_bound[0]:
+                try:
+                    android_activity.unbind(on_activity_result=_on_activity_result)
+                except Exception:
+                    pass
+                callback_bound[0] = False
+
+        def _deliver(uri_string):
+            if finished[0]:
+                return
+            finished[0] = True
+            _open_document_in_progress[0] = False
+            _unbind_callback()
+            Clock.schedule_once(lambda _dt: on_result(uri_string), 0)
+
         def _on_activity_result(request_code, result_code, data):
             if request_code != _OPEN_DOCUMENT_REQUEST_CODE:
                 return
             uri_string = None
             try:
-                if result_code == -1 and data is not None:  # RESULT_OK
+                if result_code == -1 and data is not None:
                     uri = data.getData()
                     if uri is not None:
                         uri_string = uri.toString()
             except Exception as exc:
-                print("[RedAlarm] file pick result error:", exc)
-            try:
-                android_activity.unbind(on_activity_result=_on_activity_result)
-            except Exception:
-                pass
-            Clock.schedule_once(lambda dt: on_result(uri_string), 0)
+                print("[RedAlarm] file picker result error:", exc)
+            _deliver(uri_string)
 
-        android_activity.bind(on_activity_result=_on_activity_result)
-        intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
-        intent.addCategory(Intent.CATEGORY_OPENABLE)
-        intent.setType("audio/*")
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        _activity().startActivityForResult(intent, _OPEN_DOCUMENT_REQUEST_CODE)
+        try:
+            android_activity.bind(on_activity_result=_on_activity_result)
+            callback_bound[0] = True
+            intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            intent.setType("audio/*")
+            intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            )
+            _activity().startActivityForResult(intent, _OPEN_DOCUMENT_REQUEST_CODE)
+        except Exception:
+            _open_document_in_progress[0] = False
+            finished[0] = True
+            _unbind_callback()
+            raise
 
     def android_get_display_name(uri_string):
         """Best-effort human-readable file name for a content:// URI."""
@@ -554,10 +617,7 @@ if ANDROID:
         Notification = autoclass("android.app.Notification")
         AndroidR_drawable = autoclass("android.R$drawable")
 
-        tap_pending_intent = _alarm_pending_intent(
-            alarm_id, stable_request_code(alarm_id, "ring_tap"),
-            fire_token="tap" + str(int(datetime.datetime.now().timestamp() * 1000)),
-        )
+        tap_pending_intent = _ring_ui_pending_intent(alarm_id)
         dismiss_pi = _notification_action_pending_intent(alarm_id, "dismiss")
         snooze_pi = _notification_action_pending_intent(alarm_id, "snooze")
 
@@ -1187,7 +1247,16 @@ def pick_ringtone_file(on_chosen, on_error):
     does nothing"). On desktop it tries plyer, then falls back to tkinter."""
 
     def _deliver(path):
-        Clock.schedule_once(lambda dt: on_chosen(path), 0)
+        def deliver_safely(_dt):
+            try:
+                on_chosen(path)
+            except Exception as exc:
+                print("[RedAlarm] picked ringtone callback failed:", exc)
+                try:
+                    on_error("Could not load that audio file. Choose another file.")
+                except Exception:
+                    pass
+        Clock.schedule_once(deliver_safely, 0)
 
     if ANDROID:
         try:
@@ -2318,22 +2387,28 @@ class AlarmRingScreen(Screen):
         self._ring_service_state_path = None
         self._ring_service_check_event = None
         self._ring_service_check_deadline = 0.0
+        self._countdown_deadline_monotonic = None
         self._pending_sound_path = None
         self._pending_sound_volume = 0.80
 
     def on_leave(self, *args):
-        # Safety net: whichever way we leave this screen, sound + timer stop.
+        # If Android removes the UI unexpectedly, the foreground service still owns audio.
+        service_owns_audio = bool(ANDROID and self._ringing and self._ring_service_state_path)
         self._stop_common(
-            cancel_notification=not self._keep_snooze_notification
+            cancel_notification=not self._keep_snooze_notification and not service_owns_audio,
+            preserve_service=service_owns_audio,
         )
 
-    def start_ringing(self, alarm):
-        if ANDROID and self._ring_service_state_path and self._ringing:
+    def start_ringing(self, alarm, service_already_started=False):
+        if ANDROID and not service_already_started and self._ring_service_state_path and self._ringing:
             try:
                 android_signal_ring_service_stop("stop")
             except Exception:
                 pass
-        self._stop_common()                  # kill any previous ring first
+        self._stop_common(
+            cancel_notification=not service_already_started,
+            preserve_service=service_already_started,
+        )  # preserve audio/notification when attaching UI to native-started service
         self._ring_service_state_path = None
         self._ring_service_check_deadline = 0.0
         self._keep_snooze_notification = False
@@ -2380,7 +2455,12 @@ class AlarmRingScreen(Screen):
         self._update_countdown_text()
         self._pending_sound_path = path
         self._pending_sound_volume = ring_volume
-        if ANDROID:
+        if ANDROID and service_already_started:
+            self._ring_service_state_path = android_ring_service_state_path()
+            self._ring_service_check_deadline = time.monotonic() + 2.0
+            self._ring_service_check_event = Clock.schedule_interval(
+                self._check_ring_service_start, 0.12)
+        elif ANDROID:
             try:
                 logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                          "splashimage.png")
@@ -2394,7 +2474,10 @@ class AlarmRingScreen(Screen):
                     "clip_start_ms": int(alarm.get("clip_start_ms", 0) or 0),
                     "clip_duration_ms": int(alarm.get("clip_duration_ms", 0) or 0),
                     "duration_sec": self._remaining_seconds,
-                    "deadline_epoch": time.time() + self._remaining_seconds,
+                    "volume": ring_volume,
+                    "alarms_path": str(app.store.path),
+                    "disable_one_time_on_auto": not any(alarm.get("days") or []),
+                    "vibrate": bool(alarm.get("vibrate", False)),
                 })
                 self._ring_service_check_deadline = time.monotonic() + 2.0
                 self._ring_service_check_event = Clock.schedule_interval(
@@ -2402,15 +2485,15 @@ class AlarmRingScreen(Screen):
             except Exception as exc:
                 print("[RedAlarm] foreground audio service unavailable; using Activity audio:", exc)
                 self._start_local_ring_audio()
+                self._start_countdown(session)
         else:
             self._start_local_ring_audio()
+            self._start_countdown(session)
 
         # ONE timer drives both the digits and the auto-dismiss: the tick
         # that reaches zero is the tick that ends the alarm, so the display
         # and the real cutoff can never disagree.
-        self._countdown_event = Clock.schedule_interval(
-            lambda dt: self._tick_countdown(dt, session), 1
-        )
+        # Countdown intentionally deferred until playback is confirmed.
 
     def _start_local_ring_audio(self):
         """Fallback audio path if the Android service cannot start in time."""
@@ -2440,6 +2523,11 @@ class AlarmRingScreen(Screen):
             pass
         if reason == "started":
             self._ring_service_check_event = None
+            self._start_countdown(self._ring_session)
+            return False
+        if reason == "auto":
+            self._ring_service_check_event = None
+            self.finish(reason="auto")
             return False
         if reason == "error" or time.monotonic() >= self._ring_service_check_deadline:
             event, self._ring_service_check_event = self._ring_service_check_event, None
@@ -2449,9 +2537,54 @@ class AlarmRingScreen(Screen):
                 android_show_ring_notification(self.alarm_id, self.label_text, self.time_text)
             except Exception:
                 pass
+            try:
+                android_signal_ring_service_stop("stop")
+            except Exception:
+                pass
+            try:
+                app = App.get_running_app()
+                alarm = app.store.get(self.alarm_id) if app else None
+                if alarm and alarm.get("vibrate", False):
+                    android_vibrate_start()
+            except Exception:
+                pass
             self._start_local_ring_audio()
+            self._start_countdown(self._ring_session)
             return False
         return True
+
+    def _start_countdown(self, session):
+        """Set the deadline once, after audio has actually started."""
+        if not self._ringing or session != self._ring_session or self._countdown_event is not None:
+            return
+        self._countdown_deadline_monotonic = time.monotonic() + max(1, int(self._remaining_seconds))
+        self._countdown_event = Clock.schedule_interval(
+            lambda dt: self._tick_countdown(dt, session), 0.10)
+
+    def _reconcile_after_resume(self):
+        """After unlock, trust the independent audio service's terminal state."""
+        if not ANDROID or not self._ringing:
+            return
+        reason = ""
+        if self._ring_service_state_path:
+            try:
+                with open(self._ring_service_state_path, "r", encoding="utf-8") as source:
+                    state = json.load(source)
+                if str(state.get("alarm_id") or "") == self.alarm_id:
+                    reason = str(state.get("reason") or "")
+            except (IOError, OSError, ValueError, TypeError):
+                pass
+        if reason == "auto":
+            self.finish(reason="auto")
+            return
+        if reason == "error" and self._sound is None:
+            self._start_local_ring_audio()
+            self._start_countdown(self._ring_session)
+        elif reason == "started" and self._countdown_event is None:
+            self._start_countdown(self._ring_session)
+        if (self._countdown_deadline_monotonic is not None
+                and time.monotonic() >= self._countdown_deadline_monotonic):
+            self.finish(reason="auto")
 
     def _try_load_and_play(self, path):
         """Kept for compatibility: plays a supplied path in a loop, or returns None."""
@@ -2460,9 +2593,15 @@ class AlarmRingScreen(Screen):
     def _tick_countdown(self, dt, session):
         if not self._ringing or session != self._ring_session:
             return False
-        self._remaining_seconds = max(0, self._remaining_seconds - 1)
-        self._update_countdown_text()
-        if self._remaining_seconds <= 0:
+        deadline = self._countdown_deadline_monotonic
+        if deadline is None:
+            self._start_countdown(session)
+            deadline = self._countdown_deadline_monotonic
+        remaining = max(0, int(math.ceil(deadline - time.monotonic())))
+        if remaining != self._remaining_seconds:
+            self._remaining_seconds = remaining
+            self._update_countdown_text()
+        if remaining <= 0:
             self.finish(reason="auto")
             return False
         return True
@@ -2471,13 +2610,14 @@ class AlarmRingScreen(Screen):
         minutes, seconds = divmod(self._remaining_seconds, 60)
         self.countdown_text = "{:02d}:{:02d}".format(minutes, seconds)
 
-    def _stop_common(self, cancel_notification=True):
+    def _stop_common(self, cancel_notification=True, preserve_service=False):
         self._ringing = False
         self._ring_session += 1              # invalidates any queued tick
 
         event, self._countdown_event = self._countdown_event, None
         if event is not None:
             event.cancel()
+        self._countdown_deadline_monotonic = None
         service_event, self._ring_service_check_event = self._ring_service_check_event, None
         if service_event is not None:
             service_event.cancel()
@@ -2494,15 +2634,16 @@ class AlarmRingScreen(Screen):
                 pass
 
         if ANDROID:
-            try:
-                android_show_over_lockscreen(False)
-                android_release_wake_lock()
-            except Exception as exc:
-                print("[RedAlarm] wake/lockscreen release error:", exc)
-            try:
-                android_vibrate_stop()
-            except Exception as exc:
-                print("[RedAlarm] vibration stop error:", exc)
+            if not preserve_service:
+                try:
+                    android_show_over_lockscreen(False)
+                    android_release_wake_lock()
+                except Exception as exc:
+                    print("[RedAlarm] wake/lockscreen release error:", exc)
+                try:
+                    android_vibrate_stop()
+                except Exception as exc:
+                    print("[RedAlarm] vibration stop error:", exc)
             if cancel_notification:
                 try:
                     android_cancel_ring_notification()
@@ -2861,15 +3002,26 @@ class RedAlarmApp(App):
         self.scheduler.restore_snoozes(self.store)
         self._refresh_next_alarm_notification()
 
+    def on_pause(self):
+        # Keep Kivy alive while Android's document picker is in the foreground.
+        return True
+
     def on_resume(self):
-        # Native receiver also re-arms alarms while Python is stopped or after reboot.
+        # Native receiver/service may have advanced alarms while this Activity was asleep.
         if not self._ready:
             return
+        try:
+            self.store.load()
+        except Exception as exc:
+            print("[RedAlarm] store refresh after resume failed:", exc)
         self._check_incoming_alarm()
         if self.root.current != "ring":
             self._resync_alarm_schedule()
         else:
             self._refresh_next_alarm_notification()
+            ring = self.root.get_screen("ring")
+            if ring._ringing:
+                Clock.schedule_once(lambda _dt: ring._reconcile_after_resume(), 0.05)
         if self._perm_popup is not None:
             self._perm_popup.refresh()
         if self.root.current == "list":
@@ -2921,6 +3073,24 @@ class RedAlarmApp(App):
         self._last_fire_token = fire_token
 
         ring = self.root.get_screen("ring")
+        if action_kind == "service_ring":
+            if ring.alarm_id == alarm_id and ring._ringing:
+                return
+            service_reason = ""
+            try:
+                state_path = android_ring_service_state_path()
+                with open(state_path, "r", encoding="utf-8") as source:
+                    service_state = json.load(source)
+                if str(service_state.get("alarm_id") or "") == str(alarm_id):
+                    service_reason = str(service_state.get("reason") or "")
+            except Exception:
+                pass
+            if service_reason == "auto":
+                self._refresh_next_alarm_notification()
+                Clock.schedule_once(lambda _dt: android_close_alarm_task(), 0.15)
+                return
+            self.handle_alarm_fired(alarm_id, service_already_started=True)
+            return
         if action_kind == "dismiss":
             print("[RedAlarm] notification Dismiss tapped:", alarm_id)
             if ring.alarm_id == alarm_id and ring._ringing:
@@ -2978,7 +3148,7 @@ class RedAlarmApp(App):
             return
         self.handle_alarm_fired(alarm_id)
 
-    def handle_alarm_fired(self, alarm_id):
+    def handle_alarm_fired(self, alarm_id, service_already_started=False):
         alarm = self.store.get(alarm_id)
         if not alarm or not alarm.get("enabled", True):
             return
@@ -2993,15 +3163,17 @@ class RedAlarmApp(App):
             )
 
         ring = self.root.get_screen("ring")
-        ring.start_ringing(alarm)
+        ring.start_ringing(alarm, service_already_started=service_already_started)
         self.root.current = "ring"
         self._refresh_next_alarm_notification()
 
     def on_stop(self):
         if self._ready:
             ring = self.root.get_screen("ring")
+            service_owns_audio = bool(ANDROID and ring._ringing and ring._ring_service_state_path)
             ring._stop_common(
-                cancel_notification=not ring._keep_snooze_notification
+                cancel_notification=not ring._keep_snooze_notification and not service_owns_audio,
+                preserve_service=service_owns_audio,
             )
 
 
