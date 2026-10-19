@@ -368,8 +368,8 @@ class SpinnerWheel(Widget):
         self.on_change = on_change
         self.row_height = dp(56)
         # Natural one-finger response: a normal drag advances the dial without feeling sticky.
-        self.drag_sensitivity = 1.35  # responsive to short, small finger drags
-        self.max_fling_velocity = 4.00  # native-clock-style flick without an excessive jump
+        self.drag_sensitivity = 1.55  # responsive to short, small finger drags
+        self.max_fling_velocity = 6.00  # native-clock-style flick without an excessive jump
         if selected_value not in self.values:
             selected_value = self.values[0]
         self._active_value = selected_value
@@ -544,7 +544,7 @@ class SpinnerWheel(Widget):
             Animation.cancel_all(self, "position")
             Animation(position=float(target), duration=0.34, t="out_cubic").start(self)
             return True
-        if abs(self._velocity) > 1.15:
+        if abs(self._velocity) > 0.70:
             self._fling_event = Clock.schedule_interval(self._fling_step, 1.0 / 60.0)
         else:
             self._start_settle()
@@ -566,8 +566,8 @@ class SpinnerWheel(Widget):
                 self._start_settle()
                 return False
         self._set_position(next_pos)
-        self._velocity *= math.exp(-4.20 * dt)
-        if abs(self._velocity) < 0.48:
+        self._velocity *= math.exp(-2.8 * dt)
+        if abs(self._velocity) < 0.25:
             self._fling_event = None
             self._start_settle()
             return False
