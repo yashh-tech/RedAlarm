@@ -13,6 +13,7 @@ import struct
 
 from kivy.animation import Animation
 from kivy.clock import Clock
+from kivy.core.window import Window
 from kivy.core.audio import SoundLoader
 from kivy.metrics import dp, sp
 from kivy.properties import NumericProperty, StringProperty, BooleanProperty
@@ -367,9 +368,10 @@ class SpinnerWheel(Widget):
         self.formatter = formatter or (lambda value: str(value))
         self.on_change = on_change
         self.row_height = dp(56)
-        # Natural one-finger response: a normal drag advances the dial without feeling sticky.
-        self.drag_sensitivity = 1.35  # responsive to short, small finger drags
-        self.max_fling_velocity = 4.00  # native-clock-style flick without an excessive jump
+        # Samsung-like response: a short drag advances the wheel naturally;
+        # stronger damping prevents a fast flick from racing through values.
+        self.drag_sensitivity = 1.75
+        self.max_fling_velocity = 4.20
         if selected_value not in self.values:
             selected_value = self.values[0]
         self._active_value = selected_value
@@ -494,6 +496,8 @@ class SpinnerWheel(Widget):
             label.text_size = label.size
 
     def on_touch_down(self, touch):
+        if self._touch is not None and touch is not self._touch:
+            return super().on_touch_down(touch)
         if not self.collide_point(*touch.pos):
             return super().on_touch_down(touch)
         if getattr(touch, "is_mouse_scrolling", False):
@@ -533,9 +537,15 @@ class SpinnerWheel(Widget):
         return True
 
     def on_touch_up(self, touch):
-        if touch.grab_current is not self or touch is not self._touch:
+        # A popup or platform touch-cancel can release the grab unexpectedly.
+        # Still clear our own drag so the selector cannot remain stuck.
+        if touch is not self._touch:
             return super().on_touch_up(touch)
-        touch.ungrab(self)
+        try:
+            if touch.grab_current is self:
+                touch.ungrab(self)
+        except Exception:
+            pass
         self._touch = None
         self._dragging = False
         is_tap = abs(touch.y - self._touch_start_y) < dp(8)
@@ -566,8 +576,8 @@ class SpinnerWheel(Widget):
                 self._start_settle()
                 return False
         self._set_position(next_pos)
-        self._velocity *= math.exp(-4.20 * dt)
-        if abs(self._velocity) < 0.48:
+        self._velocity *= math.exp(-4.70 * dt)
+        if abs(self._velocity) < 0.42:
             self._fling_event = None
             self._start_settle()
             return False
@@ -579,8 +589,8 @@ class SpinnerWheel(Widget):
             self._fling_event = None
         Animation.cancel_all(self, "position")
         target = self._bounded(self._round_index(self.position))
-        # Longer eased settle is intentionally gentle near the selected value.
-        animation = Animation(position=float(target), duration=0.30, t="out_cubic")
+        # Settle reliably after the flick; a short snap prevents the dial lingering.
+        animation = Animation(position=float(target), duration=0.32, t="out_cubic")
         self._settle_animation = animation
         animation.start(self)
 
@@ -671,15 +681,16 @@ class AlarmLabelInput(TextInput):
 
 class TimePickerPage(AnchorLayout):
     def __init__(self, state, on_next, on_time_change=None, **kwargs):
-        # Center the full time-picker card vertically and horizontally in the editor page.
+        # Keep the whole picker anchored at center and adapt height for shorter phones.
         super().__init__(anchor_x="center", anchor_y="center",
-                         padding=(dp(6), dp(0), dp(6), dp(0)), **kwargs)
+                         padding=(dp(6), dp(6), dp(6), dp(6)), **kwargs)
         self.state = state
         self.on_next = on_next
         self.on_time_change = on_time_change
+        card_height = min(dp(540), max(dp(360), Window.height - dp(48)))
         self.card = RoundedPanel(
             orientation="vertical", padding=(dp(18), dp(6), dp(18), dp(8)),
-            spacing=dp(4), radius=dp(28), size_hint=(1, None), height=dp(540),
+            spacing=dp(4), radius=dp(28), size_hint=(1, None), height=card_height,
         )
         self.add_widget(self.card)
         self.card.add_widget(self._label("S E T   A L A R M", 13, SUB, height=24, bold=True))

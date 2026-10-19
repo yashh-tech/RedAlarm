@@ -13,7 +13,9 @@ import traceback
 from jnius import autoclass
 from notification import build_ringing_notification, RING_CHANNEL_ID
 
-SERVICE_NOTIFICATION_ID = 1
+# Share the ringing notification ID with main.py so startForeground updates the
+# full-screen/action notification instead of leaving a duplicate visible card.
+SERVICE_NOTIFICATION_ID = 1002
 SERVICE_CHANNEL_ID = RING_CHANNEL_ID
 
 
@@ -165,6 +167,7 @@ def main():
     alarm_id = str(config.get("alarm_id") or "")
     state_path = str(config.get("state_path") or "")
     config_path = str(config.get("config_path") or (state_path + ".config" if state_path else ""))
+    stop_path = str(config.get("stop_path") or (os.path.join(os.path.dirname(state_path), "ring_service_stop.json") if state_path else ""))
     duration = max(1, int(config.get("duration_sec") or 300))
     deadline_epoch = float(config.get("deadline_epoch") or (time.time() + duration))
     player = None
@@ -208,9 +211,16 @@ def main():
         _write_state(state_path, alarm_id, "started")
 
         # Keep the configured auto-dismiss deadline, but loop only the chosen
-        # 30-second song region. The service owns this loop even if the Activity
-        # pauses or is backgrounded.
+        # song region. Dismiss/Snooze writes a stop reason to shared state; the
+        # service continues its loop independently if the Activity is backgrounded.
         while time.time() < deadline_epoch:
+            try:
+                with open(stop_path, "r", encoding="utf-8") as state_file:
+                    state_reason = str(json.load(state_file).get("reason") or "")
+                if state_reason in ("dismiss", "snooze", "delete", "stop", "auto"):
+                    break
+            except (IOError, OSError, ValueError, TypeError):
+                pass
             if clip_end_position_ms > clip_start_position_ms:
                 try:
                     current_position = int(player.getCurrentPosition())
@@ -221,8 +231,9 @@ def main():
                 except Exception as exc:
                     print("[RedAlarm service] clip loop seek failed:", exc)
             time.sleep(0.12)
-        timed_out = True
-        _write_state(state_path, alarm_id, "auto")
+        if time.time() >= deadline_epoch:
+            timed_out = True
+            _write_state(state_path, alarm_id, "auto")
         try:
             Context = autoclass("android.content.Context")
             vibrator = service.getSystemService(Context.VIBRATOR_SERVICE)
