@@ -642,6 +642,95 @@ class WheelPanel(BoxLayout):
             top.size = bottom.size = (w, strip)
 
 
+class CompactTimePickerPopup:
+    """Small, same-screen modal time wheel used from Alarm Settings.
+
+    Uses a private copy of time values: Cancel/dismiss never mutates the alarm.
+    Apply commits hour/minute/AM-PM through the editor's existing API.
+    """
+    def __init__(self, initial_state, on_apply):
+        self.on_apply = on_apply
+        self.state = {
+            "hour": int(initial_state.get("hour", 7)),
+            "minute": int(initial_state.get("minute", 0)),
+            "ampm": "PM" if str(initial_state.get("ampm", "AM")).upper() == "PM" else "AM",
+        }
+        root = RoundedPanel(
+            fill=CARD, radius=dp(24), orientation="vertical",
+            padding=(dp(14), dp(12), dp(14), dp(12)), spacing=dp(7),
+            size_hint=(1, 1),
+        )
+        title = Label(
+            text="EDIT ALARM TIME", color=SUB, font_size=sp(12), bold=True,
+            size_hint_y=None, height=dp(20), halign="center", valign="middle",
+        )
+        title.bind(size=lambda w, v: setattr(w, "text_size", v))
+        root.add_widget(title)
+        self.preview = Label(
+            text=self._time_text(), color=TEXT, font_size=sp(25), bold=True,
+            size_hint_y=None, height=dp(31), halign="center", valign="middle",
+        )
+        self.preview.bind(size=lambda w, v: setattr(w, "text_size", v))
+        root.add_widget(self.preview)
+
+        self.wheel_panel = WheelPanel(size_hint_y=None, height=dp(210))
+        self.hour_wheel = SpinnerWheel(
+            list(range(1, 13)), self.state["hour"],
+            lambda value: self._changed("hour", value),
+            formatter=lambda value: str(value), wrap=True,
+        )
+        self.minute_wheel = SpinnerWheel(
+            list(range(60)), self.state["minute"],
+            lambda value: self._changed("minute", value),
+            formatter=lambda value: "{:02d}".format(value), wrap=True,
+        )
+        self.ampm_wheel = SpinnerWheel(
+            ["AM", "PM"], self.state["ampm"],
+            lambda value: self._changed("ampm", value),
+            formatter=lambda value: value, wrap=False,
+        )
+        # Five rows fit in the compact popup while the full-size picker keeps
+        # its original geometry and behavior.
+        for wheel in (self.hour_wheel, self.minute_wheel, self.ampm_wheel):
+            wheel.row_height = dp(42)
+            wheel._redraw()
+            self.wheel_panel.add_widget(wheel)
+        root.add_widget(self.wheel_panel)
+
+        actions = BoxLayout(
+            orientation="horizontal", spacing=dp(9),
+            size_hint_y=None, height=dp(42),
+        )
+        actions.add_widget(RoundedActionButton("CANCEL", callback=self.dismiss, accent=False))
+        actions.add_widget(RoundedActionButton("APPLY", callback=self.apply, accent=True))
+        root.add_widget(actions)
+        self.popup = Popup(
+            title="", content=root, size_hint=(0.92, None), height=dp(365),
+            background_color=CARD, separator_height=0, auto_dismiss=True,
+        )
+
+    def _time_text(self):
+        return "{:02d}:{:02d} {}".format(
+            int(self.state["hour"]), int(self.state["minute"]), self.state["ampm"]
+        )
+
+    def _changed(self, key, value):
+        self.state[key] = value
+        self.preview.text = self._time_text()
+
+    def open(self):
+        return self.popup.open()
+
+    def dismiss(self, *_):
+        self.popup.dismiss()
+
+    def apply(self, *_):
+        self.on_apply(
+            int(self.state["hour"]), int(self.state["minute"]), self.state["ampm"]
+        )
+        self.popup.dismiss()
+
+
 class RoundedActionButton(Button):
     def __init__(self, text, callback=None, accent=False, **kwargs):
         super().__init__(
@@ -1371,6 +1460,14 @@ class AlarmAppSettingsPage(BoxLayout):
         self.footer.add_widget(self.done_button)
         self.card.add_widget(self.footer)
         Clock.schedule_once(lambda *_: self.refresh_from_editor(), 0)
+
+    def on_touch_down(self, touch):
+        if (getattr(self, "time_label", None) is not None
+                and (self.time_label.collide_point(*touch.pos)
+                     or self.ampm_label.collide_point(*touch.pos))):
+            self.editor.open_time_edit_popup()
+            return True
+        return super().on_touch_down(touch)
 
     def _volume_changed(self, _widget, value):
         self.editor.volume = max(0.0, min(1.0, float(value)))

@@ -52,7 +52,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
-from redalarm_timepicker import AlarmEditorUI, RoundedActionButton, RoundedPanel, format_duration
+from redalarm_timepicker import AlarmEditorUI, CompactTimePickerPopup, RoundedActionButton, RoundedPanel, format_duration
 from alarm_schedule import next_trigger_datetime
 from alarm_sounds import default_builtin_ringtone, ensure_builtin_ringtones
 
@@ -2055,6 +2055,18 @@ class AlarmEditScreen(Screen):
     def open_time_picker(self):
         # Kept as a compatibility hook for any old call site; now it shows page 1.
         self.ui.show_picker()
+
+    def open_time_edit_popup(self):
+        """Edit time in a compact modal without leaving the Settings page."""
+        if not hasattr(self, "ui") or self.ui.current != "settings":
+            return
+        existing = getattr(self, "_time_edit_popup", None)
+        if existing is not None and getattr(existing.popup, "is_open", False):
+            return
+        popup = CompactTimePickerPopup(self.time_state, self._apply_picked_time)
+        self._time_edit_popup = popup
+        popup.popup.bind(on_dismiss=lambda *_: setattr(self, "_time_edit_popup", None))
+        popup.open()
 
     def _apply_picked_time(self, hour12, minute, ampm):
         self.time_state.update({"hour": int(hour12), "minute": int(minute), "ampm": str(ampm).upper()})
