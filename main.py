@@ -1817,6 +1817,23 @@ class AlarmEditScreen(Screen):
         self.ui.picker_page.set_values(hour12, minute, ampm, self.time_state.get("label", ""))
         self.ui.settings_page.refresh_time()
 
+    def open_time_picker(self):
+        try:
+            h12 = int(self.ids.input_hour.text)
+        except (TypeError, ValueError):
+            h12 = 12
+        try:
+            minute = int(self.ids.input_minute.text)
+        except (TypeError, ValueError):
+            minute = 0
+        popup = TimePickerPopup(h12, minute, self.ampm, self._apply_picked_time)
+        popup.open()
+
+    def _apply_picked_time(self, hour12, minute, ampm):
+        self.ids.input_hour.text = "{:02d}".format(hour12)
+        self.ids.input_minute.text = "{:02d}".format(minute)
+        self.ampm = ampm
+
     def choose_sound(self):
         self.error_message = ""
         self.error_label.text = ""
