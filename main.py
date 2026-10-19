@@ -52,6 +52,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
+from redalarm_timepicker import AlarmEditorUI, RoundedActionButton, RoundedPanel, format_duration
 
 
 APP_TITLE = "Red Alarm"
@@ -172,9 +173,28 @@ if ANDROID:
     WindowManagerFlags = autoclass("android.view.WindowManager$LayoutParams")
     KeyguardManager = autoclass("android.app.KeyguardManager")
     JString = autoclass("java.lang.String")
+    Toast = autoclass("android.widget.Toast")
+    Gravity = autoclass("android.view.Gravity")
 
     def _activity():
         return PythonActivity.mActivity
+
+    @run_on_ui_thread
+    def android_show_toast(message):
+        """Show the OS-managed Android toast, not an app-drawn overlay."""
+        try:
+            toast = Toast.makeText(
+                _activity().getApplicationContext(), JString(str(message)), Toast.LENGTH_LONG
+            )
+            # Android 10 and older honour this. Newer Android versions may
+            # choose their own position for standard text toasts.
+            try:
+                toast.setGravity(Gravity.CENTER, 0, 0)
+            except Exception:
+                pass
+            toast.show()
+        except Exception as exc:
+            print("[RedAlarm] native Android toast failed:", exc)
 
     def _alarm_manager():
         return cast("android.app.AlarmManager",
@@ -283,35 +303,35 @@ if ANDROID:
 
     @run_on_ui_thread
     def _apply_lockscreen_flags(show):
-        # Window flags have to be touched on Android's UI thread (the Kivy/SDL
-        # Python thread is not it), hence run_on_ui_thread.
+        """Only the live ringing screen may draw over the keyguard."""
         try:
-            window = _activity().getWindow()
+            activity = _activity()
+            window = activity.getWindow()
             if show:
-                # NOTE: no FLAG_DISMISS_KEYGUARD / requestDismissKeyguard() on
-                # purpose - on a PIN/pattern phone those pop the unlock prompt
-                # over the alarm. We want the alarm shown OVER the lock screen.
+                # Never dismiss the user's PIN/pattern. Put only the ringing
+                # screen over the lock screen and wake the display for it.
                 window.addFlags(WindowManagerFlags.FLAG_SHOW_WHEN_LOCKED
                                 | WindowManagerFlags.FLAG_TURN_SCREEN_ON
                                 | WindowManagerFlags.FLAG_KEEP_SCREEN_ON)
                 if BuildVersion.SDK_INT >= 27:
-                    _activity().setShowWhenLocked(True)
-                    _activity().setTurnScreenOn(True)
-                print("[RedAlarm] lockscreen: show-over-lockscreen flags applied")
+                    activity.setShowWhenLocked(True)
+                    activity.setTurnScreenOn(True)
+                print("[RedAlarm] lockscreen: ringing screen shown")
             else:
-                # Only keep-screen-on is undone. showWhenLocked/turnScreenOn
-                # stay exactly as RedAlarmApplication.java set them at activity
-                # creation - resetting them here is what would stop the NEXT
-                # alarm from waking the phone.
-                window.clearFlags(WindowManagerFlags.FLAG_KEEP_SCREEN_ON)
-                print("[RedAlarm] lockscreen: keep-screen-on cleared")
+                # Clear ALL lock-screen flags so Home/clock/editor never remain
+                # above the keyguard after dismissal or snoozing.
+                window.clearFlags(WindowManagerFlags.FLAG_SHOW_WHEN_LOCKED
+                                  | WindowManagerFlags.FLAG_TURN_SCREEN_ON
+                                  | WindowManagerFlags.FLAG_KEEP_SCREEN_ON)
+                if BuildVersion.SDK_INT >= 27:
+                    activity.setShowWhenLocked(False)
+                    activity.setTurnScreenOn(False)
+                print("[RedAlarm] lockscreen: normal activity hidden by keyguard")
         except Exception as exc:
             print("[RedAlarm] lockscreen flags error:", exc)
 
     def android_show_over_lockscreen(show):
-        """Draw above the lock screen and turn the display on (or undo the
-        keep-awake part). The creation-time half of this lives in
-        android_src/.../RedAlarmApplication.java."""
+        """Enable lock-screen visibility only for an actively ringing alarm."""
         _apply_lockscreen_flags(show)
 
     def android_copy_content_uri_to_file(uri_string, dest_path):
@@ -515,6 +535,130 @@ if ANDROID:
                         context.getSystemService(Context.NOTIFICATION_SERVICE))
         manager.cancel(_RING_NOTIF_ID)
 
+
+    @run_on_ui_thread
+    def android_close_alarm_task():
+        """Close the Android app task after a ringing action has been handled."""
+        try:
+            activity = _activity()
+            if activity is None:
+                return
+            # minapi is 24; retain fallbacks for safety on unexpected runtimes.
+            try:
+                activity.finishAndRemoveTask()
+            except Exception:
+                try:
+                    activity.finishAffinity()
+                except Exception:
+                    activity.finish()
+        except Exception as exc:
+            print("[RedAlarm] could not close alarm task:", exc)
+
+    # Separate from the temporary ring/snooze notification (ID 1002). This
+    # ongoing notification remains posted while a future alarm is scheduled.
+    _NEXT_ALARM_CHANNEL_ID = "redalarm_next_alarm_v1"
+    _NEXT_ALARM_NOTIF_ID = 1001
+
+    def android_ensure_next_alarm_channel():
+        if BuildVersion.SDK_INT < 26:
+            return
+        NotificationManager = autoclass("android.app.NotificationManager")
+        NotificationChannel = autoclass("android.app.NotificationChannel")
+        Notification = autoclass("android.app.Notification")
+        context = _activity().getApplicationContext()
+        manager = cast("android.app.NotificationManager",
+                       context.getSystemService(Context.NOTIFICATION_SERVICE))
+        channel = NotificationChannel(
+            JString(_NEXT_ALARM_CHANNEL_ID), JString("Next scheduled alarm"),
+            NotificationManager.IMPORTANCE_LOW,
+        )
+        channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC)
+        channel.enableVibration(False)
+        try:
+            channel.setSound(None, None)
+        except Exception:
+            pass
+        manager.createNotificationChannel(channel)
+
+    def android_show_next_alarm_notification(alarm_id, trigger_dt, label):
+        """Post/update a persistent lock-screen-visible countdown preview."""
+        try:
+            context = _activity().getApplicationContext()
+            Notification = autoclass("android.app.Notification")
+            AndroidR_drawable = autoclass("android.R$drawable")
+            seconds_left = max(0.0, (trigger_dt - datetime.datetime.now()).total_seconds())
+            total_minutes = int(math.ceil(seconds_left / 60.0))
+            hours, minutes = divmod(total_minutes, 60)
+            eta_text = "Your next alarm in {} hr {} min".format(hours, minutes)
+            alarm_time = trigger_dt.strftime("%I:%M %p").lstrip("0")
+            alarm_label = (str(label or "Alarm").strip() or "Alarm")
+
+            open_intent = Intent(context, PythonActivity)
+            open_intent.setAction("com.redalarm.OPEN_NEXT_ALARM")
+            open_intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                 | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                                 | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            pending_flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            open_pi = PendingIntent.getActivity(
+                _activity(), stable_request_code("redalarm-next-alarm", "open"),
+                open_intent, pending_flags,
+            )
+
+            if BuildVersion.SDK_INT >= 26:
+                builder = autoclass("android.app.Notification$Builder")(
+                    context, JString(_NEXT_ALARM_CHANNEL_ID)
+                )
+            else:
+                builder = autoclass("android.app.Notification$Builder")(context)
+                builder.setPriority(1)  # PRIORITY_LOW
+
+            builder.setContentTitle(JString("RedAlarm • Next alarm"))
+            builder.setContentText(JString(eta_text))
+            builder.setSubText(JString("{} • {}".format(alarm_label, alarm_time)))
+            builder.setSmallIcon(AndroidR_drawable.ic_lock_idle_alarm)
+            builder.setContentIntent(open_pi)
+            builder.setCategory(Notification.CATEGORY_ALARM)
+            builder.setVisibility(Notification.VISIBILITY_PUBLIC)
+            builder.setWhen(int(trigger_dt.timestamp() * 1000))
+            builder.setShowWhen(True)
+            # Android keeps the displayed countdown moving while the Python
+            # process is backgrounded or temporarily reclaimed.
+            builder.setUsesChronometer(True)
+            if BuildVersion.SDK_INT >= 24:
+                builder.setChronometerCountDown(True)
+            builder.setOngoing(True)
+            builder.setAutoCancel(False)
+            builder.setOnlyAlertOnce(True)
+            try:
+                style = autoclass("android.app.Notification$BigTextStyle")()
+                style.bigText(JString("{}\n{} • {}".format(eta_text, alarm_label, alarm_time)))
+                builder.setStyle(style)
+            except Exception:
+                pass
+
+            notification = builder.build()
+            notification.flags = (
+                int(notification.flags)
+                | int(Notification.FLAG_NO_CLEAR)
+                | int(Notification.FLAG_ONGOING_EVENT)
+            )
+            manager = cast("android.app.NotificationManager",
+                           context.getSystemService(Context.NOTIFICATION_SERVICE))
+            manager.notify(_NEXT_ALARM_NOTIF_ID, notification)
+        except Exception as exc:
+            # In particular, Android 13+ may reject this until the user grants
+            # POST_NOTIFICATIONS. The next refresh retries after permission is granted.
+            print("[RedAlarm] next-alarm notification error:", exc)
+
+    def android_cancel_next_alarm_notification():
+        try:
+            context = _activity().getApplicationContext()
+            manager = cast("android.app.NotificationManager",
+                           context.getSystemService(Context.NOTIFICATION_SERVICE))
+            manager.cancel(_NEXT_ALARM_NOTIF_ID)
+        except Exception as exc:
+            print("[RedAlarm] next-alarm notification cancel error:", exc)
+
     def android_show_snoozed_notification(alarm_id, next_trigger):
         """Keep a visible notification showing when the snoozed alarm will ring."""
         context = _activity().getApplicationContext()
@@ -578,11 +722,12 @@ if ANDROID:
         song just sits there / Silent" bug), and because it ignores the alarm
         volume stream."""
 
-        def __init__(self, path, loop=True):
+        def __init__(self, path, loop=True, volume=1.0):
             MediaPlayer = autoclass("android.media.MediaPlayer")
             AudioAttributes = autoclass("android.media.AudioAttributes")
             AudioAttributesBuilder = autoclass("android.media.AudioAttributes$Builder")
             self._mp = MediaPlayer()
+            self._volume = max(0.0, min(1.0, float(volume)))
             try:
                 attrs = (AudioAttributesBuilder()
                          .setUsage(AudioAttributes.USAGE_ALARM)
@@ -592,6 +737,7 @@ if ANDROID:
                 self._mp.setDataSource(JString(path))
                 self._mp.setLooping(bool(loop))
                 self._mp.prepare()
+                self._mp.setVolume(self._volume, self._volume)
                 self._mp.start()
             except Exception:
                 self.unload()
@@ -971,19 +1117,20 @@ def resolve_ringtone_for_playback(raw_path, app_storage_dir, display_name=None):
     return raw_path
 
 
-def load_and_play(path, loop=True):
-    """Start playing `path`. Returns an object with stop()/unload(), or None.
-    Android: native MediaPlayer on the alarm stream first (plays mp3/m4a/etc
-    regardless of file name), Kivy's SoundLoader as the fallback. Desktop:
-    SoundLoader."""
+def load_and_play(path, loop=True, volume=1.0):
+    """Play a ringtone with the requested 0..1 volume on Android or desktop."""
     if not path:
         return None
     if not os.path.exists(path):
         print("[RedAlarm] playback: file does not exist:", path)
         return None
+    try:
+        volume = max(0.0, min(1.0, float(volume)))
+    except (TypeError, ValueError):
+        volume = 1.0
     if ANDROID:
         try:
-            player = _AndroidPlayer(path, loop)
+            player = _AndroidPlayer(path, loop, volume=volume)
             print("[RedAlarm] playback: native MediaPlayer started:", path)
             return player
         except Exception as exc:
@@ -992,6 +1139,7 @@ def load_and_play(path, loop=True):
         sound = SoundLoader.load(path)
         if sound is not None:
             sound.loop = loop
+            sound.volume = volume
             sound.play()
             print("[RedAlarm] playback: SoundLoader started:", path)
             return sound
@@ -999,7 +1147,6 @@ def load_and_play(path, loop=True):
     except Exception as exc:
         print("[RedAlarm] playback: SoundLoader error:", exc)
     return None
-
 
 # ======================================================================
 # 3. CUSTOM WIDGETS (auto-registered with Kivy's Factory, so alarm.kv can
@@ -1390,6 +1537,7 @@ class AlarmListScreen(Screen):
             app.scheduler.schedule(alarm)
         else:
             app.scheduler.cancel(alarm)
+        app.refresh_next_alarm_notification()
 
     def confirm_delete(self, alarm_id):
         app = App.get_running_app()
@@ -1403,6 +1551,7 @@ class AlarmListScreen(Screen):
             if ring.alarm_id == alarm_id:
                 ring.finish(reason="delete")
             app.store.delete(alarm_id)
+            app.refresh_next_alarm_notification()
             popup.dismiss()
             self.refresh()
 
@@ -1523,225 +1672,150 @@ class PermissionsPopup(Popup):
             self._on_continue()
 
 
-class TimePickerPopup(Popup):
-    """Automatic HOUR -> MINUTES -> AM/PM time picker.
-
-    Opens on HOUR; picking an hour jumps to MINUTES (5-minute steps);
-    picking minutes jumps to AM/PM. The three step chips along the top
-    always show which part is active (and can be tapped to go back), the
-    live preview updates as you pick, and Cancel/OK are always visible so
-    OK works at any point (the pickers are pre-filled with the starting
-    time). on_confirm(hour12, minute, ampm) fires once, on OK."""
-
-    RED = (0.82, 0.10, 0.13, 1)
-    CARD = (0.11, 0.09, 0.09, 1)
-    SUB = (0.62, 0.58, 0.58, 1)
-    STEPS = ("hour", "minute", "ampm")
-    STEP_TITLES = {"hour": "HOUR", "minute": "MINUTES", "ampm": "AM / PM"}
-
-    def __init__(self, hour12, minute, ampm, on_confirm, **kwargs):
-        self.hour12 = hour12
-        self.minute = (minute // 5) * 5      # snap to the 5-minute grid
-        self.ampm = ampm
-        self.step = "hour"
-        self._on_confirm = on_confirm
-        self._grid_container = BoxLayout(orientation="vertical")
-        super().__init__(
-            title="", separator_height=0,
-            background_color=(0.03, 0.03, 0.035, 1),
-            size_hint=(0.9, 0.78),
-            **kwargs
-        )
-        self.content = self._build_content()
-        self._rebuild()
-
-    def _build_content(self):
-        root = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(10))
-
-        self._preview_label = Label(
-            text="", font_size="40sp", bold=True, color=(0.96, 0.96, 0.96, 1),
-            size_hint_y=None, height=dp(64),
-        )
-        root.add_widget(self._preview_label)
-
-        chips = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(8))
-        self._chips = {}
-        for key in self.STEPS:
-            chip = Button(text=self.STEP_TITLES[key], background_normal="",
-                          background_down="", bold=True, font_size="12.5sp")
-            chip.bind(on_release=lambda inst, k=key: self._goto(k))
-            self._chips[key] = chip
-            chips.add_widget(chip)
-        root.add_widget(chips)
-
-        root.add_widget(self._grid_container)
-
-        buttons = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(12))
-        cancel_btn = Button(text="Cancel", background_normal="", background_down="",
-                            background_color=(0, 0, 0, 0), color=self.SUB)
-        ok_btn = Button(text="OK", background_normal="", background_down="",
-                        background_color=(0, 0, 0, 0), color=self.RED, bold=True)
-        cancel_btn.bind(on_release=lambda *_: self.dismiss())
-        ok_btn.bind(on_release=self._confirm)
-        buttons.add_widget(Widget())
-        buttons.add_widget(cancel_btn)
-        buttons.add_widget(ok_btn)
-        root.add_widget(buttons)
-        return root
-
-    def _goto(self, step):
-        self.step = step
-        self._rebuild()
-
-    def _rebuild(self):
-        # live preview, with the part being edited drawn in red
-        hh = "{:02d}".format(self.hour12)
-        mm = "{:02d}".format(self.minute)
-        ap = self.ampm
-        def mark(text, active):
-            return "[color=d11a21]{}[/color]".format(text) if active else text
-        self._preview_label.markup = True
-        self._preview_label.text = "{}:{} {}".format(
-            mark(hh, self.step == "hour"),
-            mark(mm, self.step == "minute"),
-            mark(ap, self.step == "ampm"),
-        )
-        for key, chip in self._chips.items():
-            active = (key == self.step)
-            chip.background_color = self.RED if active else self.CARD
-            chip.color = (1, 1, 1, 1) if active else self.SUB
-
-        self._grid_container.clear_widgets()
-        if self.step == "ampm":
-            grid = GridLayout(cols=2, spacing=dp(12), padding=(0, dp(10)))
-            for value in ("AM", "PM"):
-                btn = Button(text=value, background_normal="", background_down="",
-                             bold=True, font_size="30sp")
-                btn.background_color = self.RED if value == self.ampm else self.CARD
-                btn.color = (1, 1, 1, 1) if value == self.ampm else self.SUB
-                btn.bind(on_release=lambda inst, v=value: self._pick(v))
-                grid.add_widget(btn)
-        else:
-            grid = GridLayout(cols=4, spacing=dp(8), padding=(0, dp(6)))
-            if self.step == "hour":
-                values, current = list(range(1, 13)), self.hour12
-            else:
-                values, current = list(range(0, 60, 5)), self.minute
-            for v in values:
-                btn = Button(text="{:02d}".format(v), background_normal="",
-                             background_down="", bold=True, font_size="17sp")
-                btn.background_color = self.RED if v == current else self.CARD
-                btn.color = (1, 1, 1, 1)
-                btn.bind(on_release=lambda inst, val=v: self._pick(val))
-                grid.add_widget(btn)
-        self._grid_container.add_widget(grid)
-
-    def _pick(self, value):
-        if self.step == "hour":
-            self.hour12 = value
-            self.step = "minute"        # auto-advance: HOUR -> MINUTES
-        elif self.step == "minute":
-            self.minute = value
-            self.step = "ampm"          # auto-advance: MINUTES -> AM/PM
-        else:
-            self.ampm = value           # AM/PM is the last step; OK confirms
-        self._rebuild()
-
-    def _confirm(self, *_):
-        if self._on_confirm:
-            self._on_confirm(self.hour12, self.minute, self.ampm)
-        self.dismiss()
-
-
 class AlarmEditScreen(Screen):
+    """Two-page alarm editor; existing persistence/scheduler APIs stay in main.py."""
     editing_id = StringProperty("")
     ampm = StringProperty("AM")
     days_selected = ListProperty([False] * 7)
     sound_path = StringProperty("")
-    sound_name = StringProperty("No sound chosen")
+    sound_name = StringProperty("Default beep")
     vibrate = BooleanProperty(False)
-    _auto_picker_pending = False
+    volume = NumericProperty(0.80)
+    auto_dismiss_sec = NumericProperty(5)
+    snooze_sec = NumericProperty(60)
+    error_message = StringProperty("")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.time_state = {"hour": 7, "minute": 16, "ampm": "AM", "label": "Alarm"}
+        self._return_screen = "home"
+        self.ui = AlarmEditorUI(self, size_hint=(1, 1), pos=self.pos)
+        self.add_widget(self.ui)
+        self.label_input = self.ui.picker_page.label_input
+        self.error_label = self.ui.settings_page.error_label
 
     def on_enter(self, *args):
-        # "Add New Alarm" opens straight into the HOUR -> MINUTES -> AM/PM
-        # picker, pre-filled with the current time (editing an existing
-        # alarm just shows its saved time; tap "Pick time" to change it).
-        if self._auto_picker_pending:
-            self._auto_picker_pending = False
-            Clock.schedule_once(lambda dt: self.open_time_picker(), 0.15)
+        # Time picker is now an inline page, not the legacy button-grid popup.
+        if self.ui.current != "picker":
+            self.ui.show_picker()
+
+    def handle_hardware_back(self):
+        """Handle Android Back inside the editor instead of exiting the app."""
+        confirmation = getattr(self, "_confirmation_popup", None)
+        if confirmation is not None and getattr(confirmation, "is_open", False):
+            confirmation.dismiss()
+            self._confirmation_popup = None
+            App.get_running_app().root.current = "list"
+            return True
+        if self.ui.current == "settings":
+            self.ui.show_picker()
+            return True
+        # First dismiss the soft keyboard; the next Back leaves the editor.
+        if getattr(self.label_input, "focus", False):
+            self.label_input.focus = False
+            return True
+        self.cancel_edit()
+        return True
 
     def load_alarm(self, alarm_id):
-        ids = self.ids
-        ids.error_label.text = ""
-        self._auto_picker_pending = alarm_id is None
+        """Load defaults or an existing record and reset the editor to page 1."""
+        app = App.get_running_app()
+        current_screen = getattr(app.root, "current", "home") if app.root else "home"
+        self._return_screen = current_screen if current_screen in ("home", "list") else "home"
+        self.error_message = ""
+        self.error_label.text = ""
+        self.ui.current = "picker"
 
         if alarm_id is None:
             self.editing_id = ""
-            # New alarm defaults to the device's current time, not a fixed
-            # 7:00 AM — falls back to 00:00 if anything about "now" fails.
-            try:
-                now = datetime.datetime.now()
-                h12 = now.hour % 12 or 12
-                ids.input_hour.text = "{:02d}".format(h12)
-                ids.input_minute.text = "{:02d}".format(now.minute)
-                self.ampm = "PM" if now.hour >= 12 else "AM"
-            except Exception:
-                ids.input_hour.text = "12"
-                ids.input_minute.text = "00"
-                self.ampm = "AM"
+            now = datetime.datetime.now()
+            hour12 = now.hour % 12 or 12
+            self.time_state.update({
+                "hour": hour12,
+                "minute": now.minute,
+                "ampm": "PM" if now.hour >= 12 else "AM",
+                "label": "Alarm",
+            })
             self.days_selected = [False] * 7
             self.sound_path = ""
-            self.sound_name = "Default beep (tap to change)"
+            self.sound_name = "Default beep"
             self.vibrate = False
-            ids.dismiss_min.text = "5"
-            ids.dismiss_sec.text = "0"
-            ids.snooze_min.text = "5"
-            ids.snooze_sec.text = "0"
-            ids.label_input.text = ""
-            ids.delete_btn.opacity = 0
-            ids.delete_btn.disabled = True
+            self.volume = 0.80
+            self.auto_dismiss_sec = 5
+            self.snooze_sec = 60
         else:
             alarm = App.get_running_app().store.get(alarm_id)
             if not alarm:
                 return
             self.editing_id = alarm_id
-            h, m = alarm["hour"], alarm["minute"]
-            self.ampm = "PM" if h >= 12 else "AM"
-            h12 = h % 12 or 12
-            ids.input_hour.text = "{:02d}".format(h12)
-            ids.input_minute.text = "{:02d}".format(m)
+            hour24 = int(alarm.get("hour", 7)) % 24
+            self.time_state.update({
+                "hour": hour24 % 12 or 12,
+                "minute": int(alarm.get("minute", 0)) % 60,
+                "ampm": "PM" if hour24 >= 12 else "AM",
+                "label": str(alarm.get("label") or "Alarm"),
+            })
             self.days_selected = list(alarm.get("days") or [False] * 7)
-            self.sound_path = alarm.get("sound_path", "")
+            if len(self.days_selected) != 7:
+                self.days_selected = (self.days_selected + [False] * 7)[:7]
+            self.sound_path = alarm.get("sound_path", "") or ""
             self.sound_name = alarm.get("sound_name") or "Default beep"
             self.vibrate = bool(alarm.get("vibrate", False))
-            dismiss_sec = int(alarm.get("auto_dismiss_sec", 300))
-            ids.dismiss_min.text = str(dismiss_sec // 60)
-            ids.dismiss_sec.text = str(dismiss_sec % 60)
-            snooze_sec = int(alarm.get("snooze_sec", 300))
-            ids.snooze_min.text = str(snooze_sec // 60)
-            ids.snooze_sec.text = str(snooze_sec % 60)
-            ids.label_input.text = alarm.get("label", "")
-            ids.delete_btn.opacity = 1
-            ids.delete_btn.disabled = False
+            try:
+                self.volume = max(0.0, min(1.0, float(alarm.get("volume", 0.80))))
+            except (TypeError, ValueError):
+                self.volume = 0.80
+            self.auto_dismiss_sec = max(1, min(10800, int(alarm.get("auto_dismiss_sec", 5) or 5)))
+            self.snooze_sec = max(3, min(10800, int(alarm.get("snooze_sec", 60) or 60)))
 
-        self._refresh_day_buttons()
+        self.ampm = self.time_state["ampm"]
+        self.ui.picker_page.set_values(
+            self.time_state["hour"], self.time_state["minute"],
+            self.time_state["ampm"], self.time_state["label"],
+        )
+        self.ui.settings_page.refresh_from_editor()
 
-    def _refresh_day_buttons(self):
-        for i in range(7):
-            btn = self.ids.get("day_{}".format(i))
-            if btn:
-                btn.state = "down" if self.days_selected[i] else "normal"
+    def _picker_state_changed(self, state):
+        self.ampm = state.get("ampm", "AM")
+        if hasattr(self, "ui"):
+            self.ui.settings_page.refresh_time()
+
+    def show_settings(self):
+        self.ui.show_settings()
+
+    def show_picker(self):
+        self.ui.show_picker()
 
     def set_day(self, index, on):
-        """Driven by each day button's own state, so the data can never
-        drift out of sync with what's drawn."""
-        if self.days_selected[index] != on:
+        if not 0 <= index < 7:
+            return
+        if self.days_selected[index] != bool(on):
             days = list(self.days_selected)
-            days[index] = on
+            days[index] = bool(on)
             self.days_selected = days
 
+    def _refresh_day_buttons(self):
+        if hasattr(self, "ui"):
+            self.ui.settings_page.refresh_days()
+
     def set_ampm(self, value):
-        self.ampm = value
+        self.ampm = "PM" if str(value).upper() == "PM" else "AM"
+        self.time_state["ampm"] = self.ampm
+        self.ui.picker_page.set_values(
+            self.time_state["hour"], self.time_state["minute"],
+            self.ampm, self.time_state.get("label", ""),
+        )
+        self.ui.settings_page.refresh_time()
+
+    def open_time_picker(self):
+        # Kept as a compatibility hook for any old call site; now it shows page 1.
+        self.ui.show_picker()
+
+    def _apply_picked_time(self, hour12, minute, ampm):
+        self.time_state.update({"hour": int(hour12), "minute": int(minute), "ampm": str(ampm).upper()})
+        self.ampm = self.time_state["ampm"]
+        self.ui.picker_page.set_values(hour12, minute, ampm, self.time_state.get("label", ""))
+        self.ui.settings_page.refresh_time()
 
     def open_time_picker(self):
         try:
@@ -1761,69 +1835,60 @@ class AlarmEditScreen(Screen):
         self.ampm = ampm
 
     def choose_sound(self):
-        self.ids.error_label.text = ""
+        self.error_message = ""
+        self.error_label.text = ""
         pick_ringtone_file(self._on_sound_picked, self._on_picker_error)
 
     def _on_picker_error(self, message):
-        self.ids.error_label.text = message
+        self.error_message = str(message)
+        self.error_label.text = self.error_message
 
     def _on_sound_picked(self, path):
         if not path:
             return
         print("[RedAlarm] ringtone picked, raw path/URI:", path)
-
         name = None
         if ANDROID and path.startswith("content://"):
             try:
                 name = android_get_display_name(path)
             except Exception as exc:
                 print("[RedAlarm] display-name lookup failed:", exc)
-
-            # ROOT CAUSE of "selected but plays Silent": a content:// URI's
-            # read permission is only reliably valid for the current app
-            # session unless explicitly persisted, and alarms often fire
-            # hours/days later after the process has been killed and
-            # restarted by AlarmManager — by then the grant can be gone and
-            # the file read silently fails at ring time with no fallback.
-            # Fix: copy the bytes to our own storage right now, at pick
-            # time, while the grant is definitely still valid, and store
-            # that durable local path instead of the URI.
             try:
                 android_take_persistable_permission(path)
             except Exception as exc:
                 print("[RedAlarm] could not persist URI permission:", exc)
             app = App.get_running_app()
             try:
-                local_path = resolve_ringtone_for_playback(path, app.ringtone_cache_dir, display_name=name)
+                local_path = resolve_ringtone_for_playback(
+                    path, app.ringtone_cache_dir, display_name=name
+                )
             except Exception as exc:
                 local_path = None
                 print("[RedAlarm] immediate ringtone copy raised:", exc)
             if not local_path or not os.path.exists(local_path):
                 print("[RedAlarm] immediate ringtone copy FAILED for", path)
-                self.ids.error_label.text = (
-                    "Couldn't read that file — try picking it again."
-                )
+                self._on_picker_error("Couldn't read that file — try picking it again.")
                 return
             print("[RedAlarm] ringtone copied to durable local path:", local_path)
             self.sound_path = local_path
         else:
             self.sound_path = path
-
         self.sound_name = name or os.path.basename(path.replace("\\", "/"))
+        self.error_message = ""
+        self.error_label.text = ""
+        self.ui.settings_page.refresh_sound()
 
     def preview_sound(self):
-        """Plays the chosen (or default) sound for ~2.5s, completely outside
-        the alarm-firing pipeline - the fastest way to tell whether audio
-        works on this device at all, separate from scheduling."""
-        self.ids.error_label.text = ""
+        self.error_message = ""
+        self.error_label.text = ""
         app = App.get_running_app()
         path = self.sound_path or app.default_ringtone_path
-        sound = load_and_play(path, loop=False)
+        sound = load_and_play(path, loop=False, volume=float(self.volume))
         if sound is None:
-            self.ids.error_label.text = "Couldn't play that sound - try another file."
+            self._on_picker_error("Couldn't play that sound — try another file.")
             return
 
-        def _stop(dt):
+        def _stop(_dt):
             try:
                 sound.stop()
                 sound.unload()
@@ -1832,7 +1897,9 @@ class AlarmEditScreen(Screen):
         Clock.schedule_once(_stop, 2.5)
 
     def cancel_edit(self):
-        App.get_running_app().root.current = "list"
+        app = App.get_running_app()
+        destination = self._return_screen if self._return_screen in ("home", "list") else "home"
+        app.root.current = destination
 
     def delete_alarm(self):
         if not self.editing_id:
@@ -1846,68 +1913,148 @@ class AlarmEditScreen(Screen):
         if ring.alarm_id == self.editing_id:
             ring.finish(reason="delete")
         app.store.delete(self.editing_id)
+        app.refresh_next_alarm_notification()
         app.root.current = "list"
 
     def _fail(self, message):
-        self.ids.error_label.text = message
+        self.error_message = str(message)
+        self.error_label.text = self.error_message
+        if self.ui.current != "settings":
+            self.ui.show_settings()
+
+    @staticmethod
+    def _next_day_label(trigger_dt, now=None):
+        now = now or datetime.datetime.now()
+        if trigger_dt.date() == now.date():
+            return "Today"
+        if trigger_dt.date() == now.date() + datetime.timedelta(days=1):
+            return "Tomorrow"
+        return trigger_dt.strftime("%A, %d %b")
+
+    def _show_alarm_confirmation(self, alarm, trigger_dt):
+        app = App.get_running_app()
+        now = datetime.datetime.now()
+        day_label = self._next_day_label(trigger_dt, now)
+        label_text = (alarm.get("label") or "Alarm").strip() or "Alarm"
+        time_text = format_time(alarm["hour"], alarm["minute"])
+        repeat_text = format_days(alarm.get("days"))
+        volume_text = "{}%".format(int(round(float(alarm.get("volume", 0.80)) * 100)))
+        details = [
+            ("Sound", alarm.get("sound_name") or "Default beep"),
+            ("Repeat", repeat_text),
+            ("Volume", volume_text),
+            ("Vibration", "On" if alarm.get("vibrate") else "Off"),
+            ("Auto-dismiss", format_duration(alarm.get("auto_dismiss_sec", 5))),
+            ("Snooze", format_duration(alarm.get("snooze_sec", 60))),
+        ]
+        content = BoxLayout(orientation="vertical", padding=(dp(18), dp(14), dp(18), dp(14)), spacing=dp(8))
+        title = Label(text="ALARM SET FOR {}".format(day_label.upper()), color=(156/255, 12/255, 12/255, 1),
+                      font_size="15sp", bold=True, size_hint_y=None, height=dp(28),
+                      halign="center", valign="middle")
+        title.bind(size=lambda w, v: setattr(w, "text_size", v))
+        content.add_widget(title)
+        name_label = Label(text=label_text, color=(0.64, 0.64, 0.68, 1), font_size="13sp", bold=True,
+                           size_hint_y=None, height=dp(22), halign="center", valign="middle")
+        name_label.bind(size=lambda w, v: setattr(w, "text_size", v))
+        content.add_widget(name_label)
+        big_time = Label(text=time_text, color=(0.975, 0.975, 0.985, 1), font_size="32sp", bold=True,
+                         size_hint_y=None, height=dp(52), halign="center", valign="middle")
+        big_time.bind(size=lambda w, v: setattr(w, "text_size", v))
+        content.add_widget(big_time)
+
+        details_panel = RoundedPanel(fill=(0.060, 0.060, 0.068, 1), radius=dp(16),
+                                      orientation="vertical", padding=(dp(12), dp(8), dp(12), dp(8)),
+                                      spacing=dp(2), size_hint_y=None, height=dp(162))
+        for key, value in details:
+            row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(23), spacing=dp(8))
+            left = Label(text=key, color=(0.64, 0.64, 0.68, 1), font_size="11sp",
+                         halign="left", valign="middle", size_hint_x=0.42)
+            left.bind(size=lambda w, v: setattr(w, "text_size", v))
+            right = Label(text=str(value), color=(0.975, 0.975, 0.985, 1), font_size="11sp", bold=True,
+                          halign="right", valign="middle", size_hint_x=0.58)
+            right.bind(size=lambda w, v: setattr(w, "text_size", v))
+            row.add_widget(left)
+            row.add_widget(right)
+            details_panel.add_widget(row)
+        content.add_widget(details_panel)
+
+        popup = Popup(title="", content=content, size_hint=(0.88, None), height=dp(455),
+                      background="atlas://data/images/defaulttheme/modalview-background",
+                      background_color=(0, 0, 0, 0), separator_height=0, auto_dismiss=False)
+        self._confirmation_popup = popup
+
+        def finish(_button=None):
+            popup.dismiss()
+            self._confirmation_popup = None
+            # Confirmation closes into View Alarms; on_pre_enter refreshes the list.
+            app.root.current = "list"
+            remaining_seconds = max(0.0, (trigger_dt - datetime.datetime.now()).total_seconds())
+            total_minutes = int(math.ceil(remaining_seconds / 60.0))
+            hours, minutes = divmod(total_minutes, 60)
+            message = "Alarm Set for {} {} and {} {} from now".format(
+                hours, "hour" if hours == 1 else "hours",
+                minutes, "minute" if minutes == 1 else "minutes",
+            )
+            if ANDROID:
+                Clock.schedule_once(lambda _dt: android_show_toast(message), 0.12)
+
+        content.add_widget(RoundedActionButton("DONE", callback=finish, accent=True,
+                                               size_hint_y=None, height=dp(44)))
+        popup.open()
 
     def save_alarm(self):
-        ids = self.ids
-
         try:
-            h12 = int(ids.input_hour.text)
-            minute = int(ids.input_minute.text)
-        except (TypeError, ValueError):
+            hour12 = int(self.time_state["hour"])
+            minute = int(self.time_state["minute"])
+            period = str(self.time_state.get("ampm", self.ampm)).upper()
+        except (KeyError, TypeError, ValueError):
             return self._fail("Enter a valid time.")
-        if not 1 <= h12 <= 12:
+        if not 1 <= hour12 <= 12:
             return self._fail("Hour must be between 1 and 12.")
         if not 0 <= minute <= 59:
             return self._fail("Minutes must be between 00 and 59.")
-
-        # 12h + AM/PM -> 24h for storage
-        if self.ampm == "PM":
-            hour = 12 if h12 == 12 else h12 + 12
+        if period == "PM":
+            hour24 = 12 if hour12 == 12 else hour12 + 12
         else:
-            hour = 0 if h12 == 12 else h12
-
+            hour24 = 0 if hour12 == 12 else hour12
         try:
-            total_dismiss = (int(ids.dismiss_min.text or "0") * 60
-                             + int(ids.dismiss_sec.text or "0"))
-            total_snooze = (int(ids.snooze_min.text or "0") * 60
-                            + int(ids.snooze_sec.text or "0"))
-        except (TypeError, ValueError):
-            return self._fail("Enter valid durations.")
-        if total_dismiss <= 0:
-            return self._fail("Auto-dismiss must be at least 1 second.")
-        if total_snooze <= 0:
-            return self._fail("Snooze must be at least 1 second.")
+            dismiss_seconds = int(self.auto_dismiss_sec)
+            snooze_seconds = int(self.snooze_sec)
+            volume = max(0.0, min(1.0, float(self.volume)))
+        except (TypeError, ValueError, OverflowError):
+            return self._fail("Enter valid settings values.")
+        if not 1 <= dismiss_seconds <= 10800:
+            return self._fail("Auto-dismiss must be between 1 second and 3 Hr.")
+        if not 3 <= snooze_seconds <= 10800:
+            return self._fail("Snooze must be between 3 seconds and 3 Hr.")
 
         app = App.get_running_app()
+        is_new_alarm = not bool(self.editing_id)
         alarm = app.store.get(self.editing_id) or {}
-        # No custom sound picked -> fall back to the built-in default beep,
-        # so a missing/failed file picker can never block saving an alarm.
         sound_path = self.sound_path or app.default_ringtone_path
         sound_name = self.sound_name if self.sound_path else "Default beep"
         alarm.update({
             "id": self.editing_id or new_alarm_id(),
-            "hour": hour,
+            "hour": hour24,
             "minute": minute,
             "days": list(self.days_selected),
-            "label": ids.label_input.text.strip(),
+            "label": str(self.time_state.get("label") or self.label_input.text or "Alarm").strip() or "Alarm",
             "sound_path": sound_path,
             "sound_name": sound_name,
-            "auto_dismiss_sec": total_dismiss,
-            "snooze_sec": total_snooze,
-            "vibrate": self.vibrate,
+            "volume": volume,
+            "auto_dismiss_sec": dismiss_seconds,
+            "snooze_sec": snooze_seconds,
+            "vibrate": bool(self.vibrate),
             "enabled": True,
         })
         app.store.put(alarm)
-
         app.scheduler.cancel(alarm)
         app.scheduler.cancel_snooze(alarm)
-        app.scheduler.schedule(alarm)
-
-        app.root.current = "list"
+        trigger_dt = app.scheduler.schedule(alarm)
+        app.refresh_next_alarm_notification()
+        print("[RedAlarm] alarm saved:", alarm.get("id"), "next trigger:", trigger_dt,
+              "new:", is_new_alarm)
+        self._show_alarm_confirmation(alarm, trigger_dt)
 
 
 class AlarmRingScreen(Screen):
@@ -1975,15 +2122,19 @@ class AlarmRingScreen(Screen):
             print("[RedAlarm] ring: resolved path missing, falling back to default")
             path = app.default_ringtone_path
 
-        sound = load_and_play(path, loop=True) if path else None
+        try:
+            ring_volume = max(0.0, min(1.0, float(alarm.get("volume", 0.80))))
+        except (TypeError, ValueError):
+            ring_volume = 0.80
+        sound = load_and_play(path, loop=True, volume=ring_volume) if path else None
         if sound is None and path != app.default_ringtone_path:
             print("[RedAlarm] ring: chosen sound failed, falling back to default beep")
-            sound = load_and_play(app.default_ringtone_path, loop=True)
+            sound = load_and_play(app.default_ringtone_path, loop=True, volume=ring_volume)
         self._sound = sound
         if sound is None:
             print("[RedAlarm] ring: NO sound could be started (not even the default)")
 
-        self._remaining_seconds = max(1, int(alarm.get("auto_dismiss_sec", 300) or 300))
+        self._remaining_seconds = max(1, int(alarm.get("auto_dismiss_sec", 5) or 5))
         self._update_countdown_text()
 
         # ONE timer drives both the digits and the auto-dismiss: the tick
@@ -2066,7 +2217,7 @@ class AlarmRingScreen(Screen):
         snooze_trigger = None
         if alarm:
             if reason == "snooze":
-                snooze_sec = max(1, int(alarm.get("snooze_sec", 300) or 300))
+                snooze_sec = max(1, int(alarm.get("snooze_sec", 60) or 60))
                 snooze_trigger = datetime.datetime.now() + datetime.timedelta(
                     seconds=snooze_sec
                 )
@@ -2082,13 +2233,20 @@ class AlarmRingScreen(Screen):
 
         self.alarm_id = ""
         self.countdown_text = ""
-        app.root.current = "home"
+        close_task = ANDROID and reason in ("auto", "dismiss", "snooze")
+        if not close_task:
+            app.root.current = "home"
 
+        app.refresh_next_alarm_notification()
         if keep_snooze_notification and snooze_trigger and ANDROID:
             try:
                 android_show_snoozed_notification(current_alarm_id, snooze_trigger)
             except Exception as exc:
                 print("[RedAlarm] snoozed notification error:", exc)
+
+        if close_task:
+            # Let the OS alarm and snooze notification be posted before removing the task.
+            Clock.schedule_once(lambda _dt: android_close_alarm_task(), 0.20)
 
 
 class RootManager(ScreenManager):
@@ -2103,10 +2261,29 @@ class RedAlarmApp(App):
     _ready = False            # True once the real UI + store + scheduler exist
     _queued_intents = None    # intents that arrive before _ready (replayed after)
 
+    def _on_keyboard(self, window, key, scancode, codepoint, modifiers):
+        """Keep Android Back navigation inside the app's screen flow."""
+        if key != 27:
+            return False
+        if not self._ready or not getattr(self, "root", None):
+            return False
+
+        current = self.root.current
+        if current == "edit":
+            return self.root.get_screen("edit").handle_hardware_back()
+        if current == "list":
+            self.root.get_screen("list").go_home()
+            return True
+        if current == "ring":
+            # Never let Back close the app while an alarm is actively ringing.
+            return True
+        return False
+
     def build(self):
         self.title = APP_TITLE
         self._queued_intents = []
         self._startup_started = time.monotonic()
+        Window.bind(on_keyboard=self._on_keyboard)
 
         # Cheap, and wanted before anything else can go wrong: log
         # uncaught exceptions to a file instead of dying silently.
@@ -2131,7 +2308,7 @@ class RedAlarmApp(App):
         return self._splash
         
     def _build_splash(self):
-        return SplashScreen(duration=2.5)
+        return SplashScreen(duration=1.0)
     
 
     def _finish_startup(self, dt):
@@ -2164,6 +2341,10 @@ class RedAlarmApp(App):
             except Exception as exc:
                 print("[RedAlarm] notification channel error:", exc)
             try:
+                android_ensure_next_alarm_channel()
+            except Exception as exc:
+                print("[RedAlarm] next-alarm notification channel error:", exc)
+            try:
                 android_request_runtime_permissions()
             except Exception as exc:
                 print("[RedAlarm] permission request error:", exc)
@@ -2178,15 +2359,21 @@ class RedAlarmApp(App):
                     print("[RedAlarm] could not schedule alarm {}: {}"
                           .format(alarm.get("id"), exc))
 
+        if ANDROID:
+            self._refresh_next_alarm_notification()
+            self._next_alarm_notification_event = Clock.schedule_interval(
+                self._refresh_next_alarm_notification, 60.0
+            )
+
         self._check_incoming_alarm()
         queued, self._queued_intents = self._queued_intents, []
         for args in queued:
             self._dispatch_intent(*args)
 
-        # Keep the splash visible for three seconds from app startup.
+        # Keep the splash visible for one second from app startup.
         remaining = max(
             0.0,
-            2.5 - (time.monotonic() - self._startup_started)
+            1.0 - (time.monotonic() - self._startup_started)
         )
         Clock.schedule_once(self._show_main_ui, remaining)
 
@@ -2300,6 +2487,41 @@ class RedAlarmApp(App):
         self._perm_popup = popup
         popup.open()
 
+    def _refresh_next_alarm_notification(self, _dt=None):
+        """Keep the persistent notification aligned with the earliest pending trigger."""
+        if not ANDROID or not self._ready:
+            return
+        try:
+            now = datetime.datetime.now()
+            pending = getattr(getattr(self, "scheduler", None), "_pending", {})
+            candidates = []
+            for pending_key, entry in list(pending.items()):
+                try:
+                    alarm_id, trigger_dt = entry
+                    if trigger_dt <= now:
+                        continue
+                    alarm = self.store.get(alarm_id)
+                    if not alarm:
+                        continue
+                    is_snooze = str(pending_key).endswith("snooze")
+                    if not is_snooze and not bool(alarm.get("enabled", True)):
+                        continue
+                    label = (str(alarm.get("label") or "Alarm").strip() or "Alarm")
+                    candidates.append((trigger_dt, alarm_id, label))
+                except Exception as exc:
+                    print("[RedAlarm] skipping invalid pending notification trigger:", exc)
+            if not candidates:
+                android_cancel_next_alarm_notification()
+                return
+            trigger_dt, alarm_id, label = min(candidates, key=lambda item: item[0])
+            android_show_next_alarm_notification(alarm_id, trigger_dt, label)
+        except Exception as exc:
+            print("[RedAlarm] next-alarm notification refresh error:", exc)
+
+    def refresh_next_alarm_notification(self):
+        """Public hook for alarm creation, toggles, edits, and dismiss/snooze."""
+        self._refresh_next_alarm_notification()
+
     def on_resume(self):
         # Fires when Android brings this activity back to the foreground —
         # including when AlarmManager relaunches it while the app was only
@@ -2308,6 +2530,7 @@ class RedAlarmApp(App):
         if not self._ready:
             return
         self._check_incoming_alarm()
+        self._refresh_next_alarm_notification()
         if self._perm_popup is not None:
             self._perm_popup.refresh()
         if self.root.current == "list":
@@ -2374,6 +2597,7 @@ class RedAlarmApp(App):
                         self.scheduler.cancel(alarm)
                 if ANDROID:
                     android_cancel_ring_notification()
+                    Clock.schedule_once(lambda _dt: android_close_alarm_task(), 0.20)
             return
         if action_kind == "snooze":
             print("[RedAlarm] notification Snooze tapped:", alarm_id)
@@ -2383,7 +2607,7 @@ class RedAlarmApp(App):
                 # A cold-start action has no active RingScreen to operate on.
                 alarm = self.store.get(alarm_id)
                 if alarm:
-                    snooze_sec = max(1, int(alarm.get("snooze_sec", 300) or 300))
+                    snooze_sec = max(1, int(alarm.get("snooze_sec", 60) or 60))
                     next_trigger = datetime.datetime.now() + datetime.timedelta(
                         seconds=snooze_sec
                     )
@@ -2391,6 +2615,7 @@ class RedAlarmApp(App):
                     ring._keep_snooze_notification = True
                     if ANDROID:
                         android_show_snoozed_notification(alarm_id, next_trigger)
+                        Clock.schedule_once(lambda _dt: android_close_alarm_task(), 0.20)
             return
 
         # A genuine fire, or a plain tap on the notification body while
@@ -2418,6 +2643,7 @@ class RedAlarmApp(App):
         ring = self.root.get_screen("ring")
         ring.start_ringing(alarm)
         self.root.current = "ring"
+        self._refresh_next_alarm_notification()
 
     def on_stop(self):
         if self._ready:

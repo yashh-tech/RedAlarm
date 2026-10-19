@@ -50,7 +50,7 @@ class LoadingBar(Widget):
 
 
 class SplashScreen(FloatLayout):
-    def __init__(self, duration=3, **kwargs):
+    def __init__(self, duration=1, **kwargs):
         super().__init__(**kwargs)
 
         self.duration = duration
@@ -133,7 +133,7 @@ class SplashScreen(FloatLayout):
         content.add_widget(self.loading_text)
 
         self.add_widget(content)
-        # Fill the bar over 3 seconds
+        # Fill the bar over the one-second splash duration
         self._loading_event = Clock.schedule_interval(
             self.update_loading,
             1 / 60
@@ -166,7 +166,7 @@ class SplashScreen(FloatLayout):
                 self._loading_event.cancel()
 
 
-def add_splash_screen(app_root, duration=3):
+def add_splash_screen(app_root, duration=1):
     wrapper = FloatLayout()
 
     app_root.size_hint = (1, 1)
@@ -189,6 +189,6 @@ if __name__ == "__main__":
 
     class SplashPreviewApp(App):
         def build(self):
-            return SplashScreen(duration=3)
+            return SplashScreen(duration=1)
 
     SplashPreviewApp().run()
