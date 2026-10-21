@@ -9,7 +9,7 @@ source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,mp3,wav,ogg,m4a,json,ttf
 # Do not bundle development/patch helpers or the launcher icon a second time.
 source.exclude_dirs = tests
-source.exclude_patterns = RedAlarm_TimePicker_Test.py,TimePicker_Test.py,TimePicker_Test2.py,gemini_timepicker.py,apply_redalarm_timepicker_integration.py,validate_redalarm_timepicker_integration.py,apply_redalarm_launcher_icon_only.py,redalarm_timepicker_payload.py,apply_redalarm_comprehensive_fix.py,redalarm_icon.png
+source.exclude_patterns = validate_redalarm_timepicker_integration.py,redalarm_icon.png
 
 version = 1.0.0
 

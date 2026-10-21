@@ -44,14 +44,12 @@ from kivy.properties import (
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
-from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.textinput import TextInput
-from kivy.uix.widget import Widget
 from redalarm_timepicker import AlarmEditorUI, CompactTimePickerPopup, RoundedActionButton, RoundedPanel, format_duration
 from alarm_schedule import next_trigger_datetime
 from alarm_sounds import default_builtin_ringtone, ensure_builtin_ringtones

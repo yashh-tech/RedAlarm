@@ -1,6 +1,5 @@
 """Reusable RedAlarm time-picker and editor UI widgets.
 
-Integrated into the real RedAlarm editor by apply_redalarm_timepicker_integration.py.
 The widgets own presentation and gestures; the application keeps alarm storage,
 scheduling, sound persistence and ringing behavior in main.py.
 """
@@ -277,25 +276,25 @@ class VibrationIcon(Widget):
 
 
 # A short synthesized click gives the wheel audible feedback without an external asset.
-# Four independent playback voices prevent rapid ticks from cutting one another off.
+# Loading happens via Kivy's clock, never synchronously inside a wheel gesture.
 _SPINNER_TICK_SOUNDS = []
 _SPINNER_TICK_LAST_AT = 0.0
 _SPINNER_TICK_CURSOR = 0
 _SPINNER_TICK_PATH = None
+_SPINNER_TICK_LOAD_SCHEDULED = False
+_SPINNER_TICK_LOAD_ATTEMPTS = 0
+_SPINNER_TICK_LOAD_COMPLETE = False
 
 
 def _spinner_tick_path():
     global _SPINNER_TICK_PATH
     if _SPINNER_TICK_PATH and os.path.isfile(_SPINNER_TICK_PATH):
         return _SPINNER_TICK_PATH
-
-    folder = os.path.join(tempfile.gettempdir(), "redalarm_timepicker_test_sounds")
+    folder = os.path.join(tempfile.gettempdir(), "redalarm_timepicker_sounds")
     os.makedirs(folder, exist_ok=True)
-    # Versioned filename ensures any older, quieter test tick is not reused.
     path = os.path.join(folder, "soft_spinner_tick_v2.wav")
     if not os.path.isfile(path):
-        sample_rate = 22050
-        duration = 0.032
+        sample_rate, duration = 22050, 0.032
         frames = bytearray()
         for i in range(int(sample_rate * duration)):
             t = i / float(sample_rate)
@@ -312,38 +311,44 @@ def _spinner_tick_path():
     return path
 
 
-def _load_spinner_tick():
-    """Load separate voices so fast wheel changes do not silence every other tick."""
-    global _SPINNER_TICK_SOUNDS
-    if _SPINNER_TICK_SOUNDS:
-        return _SPINNER_TICK_SOUNDS
+def _load_spinner_tick(_dt=0):
+    """Load one sound voice per scheduled callback, not during the gesture."""
+    global _SPINNER_TICK_LOAD_ATTEMPTS, _SPINNER_TICK_LOAD_SCHEDULED
+    global _SPINNER_TICK_LOAD_COMPLETE
+    _SPINNER_TICK_LOAD_ATTEMPTS += 1
     try:
-        path = _spinner_tick_path()
-        voices = []
-        for _ in range(4):
-            sound = SoundLoader.load(path)
-            if sound is not None:
-                sound.volume = 0.45
-                voices.append(sound)
-        _SPINNER_TICK_SOUNDS = voices
+        sound = SoundLoader.load(_spinner_tick_path())
+        if sound is not None:
+            sound.volume = 0.45
+            _SPINNER_TICK_SOUNDS.append(sound)
     except Exception as exc:
-        # Audio failure must never prevent time selection.
-        print("[RedAlarm test] Spinner tick audio unavailable:", exc)
-        _SPINNER_TICK_SOUNDS = []
-    return _SPINNER_TICK_SOUNDS
+        print("[RedAlarm] Spinner tick audio unavailable:", exc)
+    if len(_SPINNER_TICK_SOUNDS) < 4 and _SPINNER_TICK_LOAD_ATTEMPTS < 4:
+        Clock.schedule_once(_load_spinner_tick, 0.06)
+        return
+    _SPINNER_TICK_LOAD_SCHEDULED = False
+    _SPINNER_TICK_LOAD_COMPLETE = True
+
+
+def _schedule_spinner_tick_load(*_):
+    """Queue audio setup once; selection never waits for audio initialization."""
+    global _SPINNER_TICK_LOAD_SCHEDULED
+    if _SPINNER_TICK_LOAD_SCHEDULED or _SPINNER_TICK_LOAD_COMPLETE:
+        return
+    _SPINNER_TICK_LOAD_SCHEDULED = True
+    Clock.schedule_once(_load_spinner_tick, 0.25)
 
 
 def _play_spinner_tick():
-    """Play a short, audible tick when a different number crosses the center."""
+    """Play a tick when a voice is ready; otherwise defer setup without blocking."""
     global _SPINNER_TICK_LAST_AT, _SPINNER_TICK_CURSOR
     now = time.monotonic()
-    # A small debounce avoids a buzz on very fast flicks but still ticks naturally.
     if now - _SPINNER_TICK_LAST_AT < 0.028:
         return
-    voices = _load_spinner_tick()
-    if not voices:
+    if not _SPINNER_TICK_SOUNDS:
+        _schedule_spinner_tick_load()
         return
-    sound = voices[_SPINNER_TICK_CURSOR % len(voices)]
+    sound = _SPINNER_TICK_SOUNDS[_SPINNER_TICK_CURSOR % len(_SPINNER_TICK_SOUNDS)]
     _SPINNER_TICK_CURSOR += 1
     try:
         sound.stop()
@@ -351,7 +356,7 @@ def _play_spinner_tick():
         sound.play()
         _SPINNER_TICK_LAST_AT = now
     except Exception as exc:
-        print("[RedAlarm test] Could not play spinner tick:", exc)
+        print("[RedAlarm] Could not play spinner tick:", exc)
 
 
 class SpinnerWheel(Widget):
@@ -400,6 +405,7 @@ class SpinnerWheel(Widget):
             self.add_widget(label)
         self.bind(position=self._position_changed, pos=self._redraw, size=self._redraw)
         Clock.schedule_once(self._finish_init, 0)
+        Clock.schedule_once(_schedule_spinner_tick_load, 0.25)
 
     @staticmethod
     def _round_index(value):
@@ -463,6 +469,7 @@ class SpinnerWheel(Widget):
         center_idx = self._round_index(pos)
         cy = self.center_y
         row_h = self.row_height
+        row_scale = min(1.0, max(0.45, row_h / dp(56)))
         for label, offset in zip(self._labels, (-2, -1, 0, 1, 2)):
             index = center_idx + offset
             delta = index - pos
@@ -489,18 +496,35 @@ class SpinnerWheel(Widget):
                 grey = 0.74 - 0.38 * d
             else:
                 size_sp, alpha, grey = 19.0, 0.20, 0.35
-            squeeze = min(distance, 2.0) * dp(2.3)
+            squeeze = min(distance, 2.0) * dp(2.3) * row_scale
             label.text = self.formatter(value)
-            label.font_size = sp(size_sp)
+            label.font_size = sp(size_sp * row_scale)
             label.bold = distance < 0.42
             label.color = (grey, grey, min(1.0, grey + 0.025), alpha)
             label.size = (max(dp(1), self.width - squeeze * 2), row_h)
             label.pos = (self.x + squeeze, y_center - row_h / 2)
             label.text_size = label.size
 
+    def _cancel_stale_touch(self):
+        """Release a previous gesture when the platform omitted touch-up."""
+        old_touch = self._touch
+        if old_touch is not None:
+            try:
+                if old_touch.grab_current is self:
+                    old_touch.ungrab(self)
+            except Exception:
+                pass
+        self._touch = None
+        self._dragging = False
+        self._velocity = 0.0
+        self._last_motion_at = time.monotonic()
+        self._velocity_tracker.reset(self._last_motion_at, self.position)
+
     def on_touch_down(self, touch):
+        # Android can cancel a pointer without delivering its on_touch_up event.
+        # A fresh pointer must recover the wheel instead of being ignored forever.
         if self._touch is not None and touch is not self._touch:
-            return super().on_touch_down(touch)
+            self._cancel_stale_touch()
         if not self.collide_point(*touch.pos):
             return super().on_touch_down(touch)
         if getattr(touch, "is_mouse_scrolling", False):
@@ -852,8 +876,29 @@ class TimePickerPage(AnchorLayout):
 
         action_row = BoxLayout(orientation="horizontal", spacing=dp(12), size_hint_y=None, height=dp(46))
         # A single clear action on this page; DONE advances to alarm settings.
-        action_row.add_widget(RoundedActionButton("DONE", callback=self.on_next, accent=True))
+        action_row.add_widget(RoundedActionButton("DONE", callback=self._continue_to_settings, accent=True))
         self.card.add_widget(action_row)
+        # Android keyboards/overlays can resize the usable app window.
+        # Reflow the dial so its DONE action stays within the visible card.
+        self._sync_layout()
+        Window.bind(size=self._sync_layout)
+
+    def _sync_layout(self, *_):
+        card_height = min(dp(540), max(dp(280), Window.height - dp(36)))
+        self.card.height = card_height
+        wheel_height = min(dp(284), max(dp(52), card_height - dp(229)))
+        self.wheel_panel.height = wheel_height
+        row_height = min(dp(56), wheel_height / 5.0)
+        for wheel in (self.hour_wheel, self.minute_wheel, self.ampm_wheel):
+            wheel.row_height = row_height
+            wheel._redraw()
+
+    def _continue_to_settings(self):
+        # Release the keyboard before changing pages; otherwise it can obscure
+        # the transition and leave a cramped viewport on some Android versions.
+        if self.label_input.focus:
+            self.label_input.focus = False
+        self.on_next()
 
     @staticmethod
     def _label(text, font_size, color, height, bold=False):
