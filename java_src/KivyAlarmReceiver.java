@@ -219,10 +219,14 @@ public class KivyAlarmReceiver extends BroadcastReceiver {
         String salt = intent.getStringExtra("alarm_salt");
         if (salt == null) salt = "";
         if (alarmId == null || alarmId.trim().isEmpty()) return;
+        android.util.Log.i("RedAlarm", "Alarm fire received: id=" + alarmId + " salt=" + salt);
         try {
             File alarmsFile = appDataFile(context, "alarms.json");
             String raw = readText(alarmsFile);
-            if (raw == null) return;
+            if (raw == null) {
+                android.util.Log.e("RedAlarm", "Cannot read alarm data file: " + alarmsFile.getAbsolutePath());
+                return;
+            }
             JSONArray array = new JSONArray(raw);
             JSONObject alarm = null;
             for (int i = 0; i < array.length(); i++) {
@@ -232,7 +236,10 @@ public class KivyAlarmReceiver extends BroadcastReceiver {
                     break;
                 }
             }
-            if (alarm == null) return;
+            if (alarm == null) {
+                android.util.Log.e("RedAlarm", "No saved alarm matched id=" + alarmId + " in " + alarmsFile.getAbsolutePath());
+                return;
+            }
             boolean isSnooze = "snooze".equals(salt);
             if (!alarm.optBoolean("enabled", true) && !isSnooze) return;
 
@@ -258,7 +265,9 @@ public class KivyAlarmReceiver extends BroadcastReceiver {
             if (isSnooze) removeSnoozeEntry(context, alarmId);
 
             JSONObject config = new JSONObject();
-            String appRoot = new File(context.getFilesDir(), "app").getAbsolutePath();
+            File alarmDataDir = alarmsFile.getParentFile();
+            if (alarmDataDir == null) alarmDataDir = new File(context.getFilesDir(), "app");
+            String appRoot = alarmDataDir.getAbsolutePath();
             String statePath = new File(context.getFilesDir(), "ring_service_state.json").getAbsolutePath();
             String configPath = statePath + ".config";
             String stopPath = new File(context.getFilesDir(), "ring_service_stop.json").getAbsolutePath();
@@ -276,7 +285,11 @@ public class KivyAlarmReceiver extends BroadcastReceiver {
             config.put("title", label);
             config.put("time_text", timeText);
             config.put("sound_path", sound);
-            config.put("fallback_path", new File(appRoot, "ringtones/default_alarm.wav").getAbsolutePath());
+            File primaryFallback = new File(new File(appRoot, "ringtones"), "default_alarm.wav");
+            File legacyFallback = new File(new File(context.getFilesDir(), "app/ringtones"), "default_alarm.wav");
+            File selectedFallback = primaryFallback.isFile() ? primaryFallback : legacyFallback;
+            config.put("fallback_path", selectedFallback.getAbsolutePath());
+            android.util.Log.i("RedAlarm", "Ring audio paths: custom=" + sound + " fallback=" + selectedFallback.getAbsolutePath());
             config.put("logo_path", new File(appRoot, "splashimage.png").getAbsolutePath());
             config.put("clip_start_ms", Math.max(0, alarm.optInt("clip_start_ms", 0)));
             config.put("clip_duration_ms", Math.max(0, alarm.optInt("clip_duration_ms", 0)));
@@ -293,7 +306,9 @@ public class KivyAlarmReceiver extends BroadcastReceiver {
             new File(stopPath).delete();
             writeTextAtomically(new File(configPath), config.toString());
             Class<?> serviceClass = Class.forName(context.getPackageName() + ".ServiceRing");
+            android.util.Log.i("RedAlarm", "Starting ringtone service: " + serviceClass.getName());
             serviceClass.getMethod("start", Context.class, String.class).invoke(null, context, config.toString());
+            android.util.Log.i("RedAlarm", "Ringtone service start request submitted for id=" + alarmId);
         } catch (Exception exc) {
             android.util.Log.e("RedAlarm", "Native alarm service launch failed", exc);
             // Last-resort compatibility fallback; Android may decline this background Activity.
