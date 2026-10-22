@@ -11,6 +11,7 @@ import wave
 import struct
 
 from kivy.animation import Animation
+from kivy.core.window import Window
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.core.audio import SoundLoader
@@ -806,7 +807,7 @@ class TimePickerPage(AnchorLayout):
         card_height = min(dp(540), max(dp(360), Window.height - dp(48)))
         self.card = RoundedPanel(
             orientation="vertical", padding=(dp(18), dp(6), dp(18), dp(8)),
-            spacing=dp(4), radius=dp(28), size_hint=(1, None), height=card_height,
+            spacing=dp(4), radius=dp(28), size_hint=(1, None), height=min(dp(540), max(dp(360), Window.height - dp(48))),
         )
         self.add_widget(self.card)
         self.card.add_widget(self._label("S E T   A L A R M", 13, SUB, height=24, bold=True))
@@ -878,8 +879,7 @@ class TimePickerPage(AnchorLayout):
         # A single clear action on this page; DONE advances to alarm settings.
         action_row.add_widget(RoundedActionButton("DONE", callback=self._continue_to_settings, accent=True))
         self.card.add_widget(action_row)
-        # Android keyboards/overlays can resize the usable app window.
-        # Reflow the dial so its DONE action stays within the visible card.
+        # Reflow the picker after keyboard/window resizing.
         self._sync_layout()
         Window.bind(size=self._sync_layout)
 
@@ -894,8 +894,7 @@ class TimePickerPage(AnchorLayout):
             wheel._redraw()
 
     def _continue_to_settings(self):
-        # Release the keyboard before changing pages; otherwise it can obscure
-        # the transition and leave a cramped viewport on some Android versions.
+        # Hide the soft keyboard before the page transition.
         if self.label_input.focus:
             self.label_input.focus = False
         self.on_next()
