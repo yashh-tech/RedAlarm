@@ -13,9 +13,7 @@ import traceback
 from jnius import autoclass
 from notification import build_ringing_notification, RING_CHANNEL_ID
 
-# Share the ringing notification ID with main.py so startForeground updates the
-# full-screen/action notification instead of leaving a duplicate visible card.
-SERVICE_NOTIFICATION_ID = 1002
+SERVICE_NOTIFICATION_ID = 1
 SERVICE_CHANNEL_ID = RING_CHANNEL_ID
 
 
@@ -47,10 +45,9 @@ def _make_pending_intent(context, alarm_id, kind=None):
 
     intent = Intent(context, PythonActivity)
     if kind is None:
-        intent.setAction("com.redalarm.RING_UI_" + alarm_id)
-        intent.putExtra("action_kind", JString("service_ring"))
+        intent.setAction("com.redalarm.FIRE_" + alarm_id)
         salt = "ring_tap"
-        nonce = "ui" + str(int(time.time() * 1000))
+        nonce = "tap" + str(int(time.time() * 1000))
     else:
         intent.setAction("com.redalarm.{}_{}".format(kind.upper(), alarm_id))
         intent.putExtra("action_kind", JString(kind))
@@ -67,37 +64,6 @@ def _make_pending_intent(context, alarm_id, kind=None):
     return PendingIntent.getActivity(
         context, _stable_request_code(alarm_id, salt), intent, flags
     )
-
-
-def _disable_one_time_alarm(config):
-    """Disable a one-shot alarm after service-owned auto-dismiss, even without Activity."""
-    alarms_path = str(config.get("alarms_path") or "")
-    alarm_id = str(config.get("alarm_id") or "")
-    if not alarms_path or not alarm_id or not config.get("disable_one_time_on_auto"):
-        return False
-    try:
-        with open(alarms_path, "r", encoding="utf-8") as source:
-            alarms = json.load(source)
-        changed = False
-        for alarm in alarms:
-            if not isinstance(alarm, dict) or str(alarm.get("id") or "") != alarm_id:
-                continue
-            if any(alarm.get("days") or []):
-                return False
-            if alarm.get("enabled", True):
-                alarm["enabled"] = False
-                changed = True
-            break
-        if not changed:
-            return False
-        temporary = alarms_path + ".ring-service.tmp"
-        with open(temporary, "w", encoding="utf-8") as output:
-            json.dump(alarms, output, ensure_ascii=False, indent=2)
-        os.replace(temporary, alarms_path)
-        return True
-    except Exception as exc:
-        print("[RedAlarm service] could not disable completed one-shot alarm:", exc)
-        return False
 
 
 def _make_alarm_notification(service, config):
@@ -121,7 +87,7 @@ def _make_alarm_notification(service, config):
     )
 
 
-def _new_player(context, path, clip_start_ms=0, clip_duration_ms=0, volume=0.80):
+def _new_player(context, path, clip_start_ms=0, clip_duration_ms=0):
     MediaPlayer = autoclass("android.media.MediaPlayer")
     AudioAttributes = autoclass("android.media.AudioAttributes")
     PowerManager = autoclass("android.os.PowerManager")
@@ -154,11 +120,6 @@ def _new_player(context, path, clip_start_ms=0, clip_duration_ms=0, volume=0.80)
         player.setLooping(clip_ms <= 0)
         if clip_ms > 0:
             player.seekTo(start_ms)
-        try:
-            level = max(0.0, min(1.0, float(volume)))
-        except (TypeError, ValueError):
-            level = 0.80
-        player.setVolume(level, level)
         player.start()
         return player, start_ms, (start_ms + clip_ms if clip_ms > 0 else 0)
     except Exception:
@@ -204,10 +165,12 @@ def main():
     alarm_id = str(config.get("alarm_id") or "")
     state_path = str(config.get("state_path") or "")
     config_path = str(config.get("config_path") or (state_path + ".config" if state_path else ""))
-    stop_path = str(config.get("stop_path") or (os.path.join(os.path.dirname(state_path), "ring_service_stop.json") if state_path else ""))
     duration = max(1, int(config.get("duration_sec") or 300))
-    # Calculated only once MediaPlayer has successfully started below.
-    deadline_epoch = None
+    # Allow one second for the ringing Activity to become visible when the
+    # selected auto-dismiss duration is only 1, 2 or 3 seconds.
+    if duration <= 3:
+        duration += 1
+    deadline_epoch = float(config.get("deadline_epoch") or (time.time() + duration))
     player = None
     clip_start_position_ms = 0
     clip_end_position_ms = 0
@@ -232,7 +195,7 @@ def main():
             if path and os.path.isfile(path):
                 try:
                     player, clip_start_position_ms, clip_end_position_ms = _new_player(
-                        context, path, start_ms, clip_ms, config.get("volume", 0.80)
+                        context, path, start_ms, clip_ms
                     )
                     print("[RedAlarm service] playing:", path,
                           "segment_start_ms=", clip_start_position_ms,
@@ -244,37 +207,14 @@ def main():
         if player is None:
             raise RuntimeError("No ringtone could be played: {}".format(last_error))
 
-        # Start the auto-dismiss duration after actual MediaPlayer playback begins.
-        deadline_epoch = time.time() + duration
-        if config.get("vibrate"):
-            try:
-                Context = autoclass("android.content.Context")
-                vibrator = service.getSystemService(Context.VIBRATOR_SERVICE)
-                if vibrator is not None and vibrator.hasVibrator():
-                    pattern = [0, 800, 500]
-                    BuildVersion = autoclass("android.os.Build$VERSION")
-                    if BuildVersion.SDK_INT >= 26:
-                        VibrationEffect = autoclass("android.os.VibrationEffect")
-                        vibrator.vibrate(VibrationEffect.createWaveform(pattern, 1))
-                    else:
-                        vibrator.vibrate(pattern, 1)
-            except Exception as exc:
-                print("[RedAlarm service] vibration start failed:", exc)
         # Signal only after MediaPlayer.prepare/start succeeded; main.py waits
         # for this marker instead of assuming ServiceRing.start means audio began.
         _write_state(state_path, alarm_id, "started")
 
         # Keep the configured auto-dismiss deadline, but loop only the chosen
-        # song region. Dismiss/Snooze writes a stop reason to shared state; the
-        # service continues its loop independently if the Activity is backgrounded.
+        # 30-second song region. The service owns this loop even if the Activity
+        # pauses or is backgrounded.
         while time.time() < deadline_epoch:
-            try:
-                with open(stop_path, "r", encoding="utf-8") as state_file:
-                    state_reason = str(json.load(state_file).get("reason") or "")
-                if state_reason in ("dismiss", "snooze", "delete", "stop", "auto"):
-                    break
-            except (IOError, OSError, ValueError, TypeError):
-                pass
             if clip_end_position_ms > clip_start_position_ms:
                 try:
                     current_position = int(player.getCurrentPosition())
@@ -285,18 +225,8 @@ def main():
                 except Exception as exc:
                     print("[RedAlarm service] clip loop seek failed:", exc)
             time.sleep(0.12)
-        if deadline_epoch is not None and time.time() >= deadline_epoch:
-            timed_out = True
-            _write_state(state_path, alarm_id, "auto")
-            if _disable_one_time_alarm(config):
-                try:
-                    Intent = autoclass("android.content.Intent")
-                    Receiver = autoclass("org.kivy.android.KivyAlarmReceiver")
-                    refresh = Intent(service.getApplicationContext(), Receiver)
-                    refresh.setAction("com.redalarm.REFRESH_SCHEDULES")
-                    service.sendBroadcast(refresh)
-                except Exception as exc:
-                    print("[RedAlarm service] could not refresh native alarm schedules:", exc)
+        timed_out = True
+        _write_state(state_path, alarm_id, "auto")
         try:
             Context = autoclass("android.content.Context")
             vibrator = service.getSystemService(Context.VIBRATOR_SERVICE)

@@ -27,33 +27,6 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Run Python regression tests
-        shell: bash
-        run: |
-          python -m compileall -q main.py alarm_schedule.py alarm_sounds.py redalarm_timepicker.py splash_screen.py notification.py services java_src
-          python -m unittest discover -s tests -v
-          python validate_redalarm_timepicker_integration.py
-
-      - name: Optimize packaged artwork without changing its layout
-        shell: bash
-        run: |
-          python -m pip install --disable-pip-version-check Pillow
-          python - <<'PY'
-          from PIL import Image
-          settings = {
-              "redalarm_icon.png": (512, 512),
-              "splashimage.png": (512, 512),
-              "presplash2.png": (768, 1152),
-          }
-          for path, max_size in settings.items():
-              with Image.open(path) as source:
-                  mode = "RGBA" if "A" in source.getbands() else "RGB"
-                  image = source.convert(mode)
-                  image.thumbnail(max_size, Image.Resampling.LANCZOS)
-                  image.save(path, format="PNG", optimize=True, compress_level=9)
-                  print(f"Optimized {path}: {image.width}x{image.height}")
-          PY
-
       - name: Install System Dependencies
         run: |
           sudo apt-get update

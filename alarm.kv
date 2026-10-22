@@ -166,15 +166,23 @@
         dim: not root.enabled
 
     Button:
-        text: "x"
+        text: "×"
         size_hint: None, None
-        size: "40dp", "40dp"
+        size: "42dp", "42dp"
         pos_hint: {"center_y": 0.5}
         background_normal: ""
         background_down: ""
         background_color: 0, 0, 0, 0
-        color: COL_SUBTEXT
-        font_size: "20sp"
+        color: (1, 0.48, 0.50, 1)
+        font_size: "23sp"
+        bold: True
+        canvas.before:
+            Color:
+                rgba: (0.25, 0.045, 0.055, 1) if self.state == "normal" else (0.42, 0.07, 0.085, 1)
+            RoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: [dp(12)]
         on_release: root.on_delete_press()
 
     IOSToggle:
