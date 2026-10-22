@@ -7,6 +7,9 @@ package.domain = org.yashtech
 
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,mp3,wav,ogg,m4a,json,ttf
+# Do not bundle development/patch helpers or the launcher icon a second time.
+source.exclude_dirs = tests
+source.exclude_patterns = validate_redalarm_timepicker_integration.py,redalarm_icon.png
 
 version = 1.0.0
 
@@ -42,7 +45,7 @@ android.archs = arm64-v8a
 #                                    skins (MIUI/ColorOS/etc.) want this
 #                                    granted before they'll let a
 #                                    backgrounded app pop an activity
-android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,POST_NOTIFICATIONS,SYSTEM_ALERT_WINDOW,VIBRATE,USE_FULL_SCREEN_INTENT,RECEIVE_BOOT_COMPLETED
+android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,POST_NOTIFICATIONS,SYSTEM_ALERT_WINDOW,VIBRATE,USE_FULL_SCREEN_INTENT,RECEIVE_BOOT_COMPLETED,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PLAYBACK
 
 # CRITICAL for alarms: without this, Android stacks a new copy of the
 # activity on top every time AlarmManager fires while the app is already
@@ -50,10 +53,11 @@ android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGN
 # onNewIntent (which is what main.py's android.activity.bind hook needs).
 android.manifest.launch_mode = singleTask
 
-# Lock-screen alarm: a tiny Application class (android_src/...) sets
-# showWhenLocked + turnScreenOn on every activity at creation time, and the
-# manifest <application> tag is pointed at it. See RedAlarmApplication.java.
+# Only genuine ringing intents get lock-screen visibility; native receiver
+# restores alarms after reboot/time/time-zone changes without launching Home.
 android.add_src = java_src,android_src
+# Independent ringtone playback that continues if the Kivy Activity is stopped.
+services = ring:services/ring_service.py:foreground:sticky:foregroundServiceType=mediaPlayback
 p4a.hook = java_src/manifest_hook.py
 android.extra_manifest_application_arguments = ./extra_manifest_application_arguments.xml
 

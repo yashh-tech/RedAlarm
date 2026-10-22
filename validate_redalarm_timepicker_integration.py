@@ -88,8 +88,8 @@ def main() -> int:
     presets = class_assign_value(module_text, "DurationRow", "PRESETS")
     if presets != sorted(set(presets)):
         fail("DurationRow.PRESETS must be unique and sorted for +/- stepping")
-    if presets[0] != 3 or presets[-1] != 10800:
-        fail("Duration presets must span 3 seconds through 3 Hr")
+    if not presets or presets[0] != 1 or presets[-1] != 10800:
+        fail("Duration presets must span 1 second through 3 Hr")
     for required in (3, 5, 10, 15, 30, 60, 600, 900, 1800, 2700, 10800):
         if required not in presets:
             fail("Required duration preset {} missing".format(required))
@@ -98,13 +98,11 @@ def main() -> int:
     print("PASS: timer preset order and 3 Hr hard cap")
 
     required_main = [
-        "from redalarm_timepicker import AlarmEditorUI, RoundedActionButton, RoundedPanel, format_duration",
+        "from redalarm_timepicker import AlarmEditorUI, CompactTimePickerPopup, RoundedActionButton, RoundedPanel, format_duration",
         "class AlarmEditScreen(Screen):",
         "self._show_alarm_confirmation(alarm, trigger_dt)",
-        "home.show_toast(message)",
-        "def show_toast(self, message):",
+        "android_show_toast(message)",
         "def load_and_play(path, loop=True, volume=1.0):",
-        "load_and_play(path, loop=True, volume=ring_volume)",
         '"auto_dismiss_sec": dismiss_seconds',
         '"snooze_sec": snooze_seconds',
     ]
@@ -115,7 +113,7 @@ def main() -> int:
         fail("Stale TimePickerPage.set_editing call found")
     if "self.ids.dismiss_min" in main_text or "self.ids.input_hour" in main_text:
         fail("Legacy KV editor IDs remain in the replacement editor")
-    print("PASS: picker -> settings -> save/confirmation -> home toast wiring")
+    print("PASS: picker -> settings -> save/confirmation -> View Alarms wiring")
 
     if 'formatter=lambda v: "{:02d}".format(v)' not in module_text:
         fail("Minute wheel is not formatted with leading zeroes")
@@ -123,14 +121,34 @@ def main() -> int:
         fail("Spinner tick SoundLoader import missing")
     if "class AlarmAppSettingsPage(BoxLayout):" not in module_text:
         fail("Settings page class missing")
-    if "class TimePickerPage(BoxLayout):" not in module_text:
-        fail("Time picker page class missing")
+    if "class TimePickerPage(AnchorLayout):" not in module_text:
+        fail("Time picker page class missing or has wrong base class")
     if "transparent.png" in module_text:
         fail("Invalid transparent.png Kivy texture reference remains")
     if "<AlarmEditScreen>:" not in kv_text or "<AlarmRingScreen>:" not in kv_text:
         fail("KV screen boundaries missing")
     print("PASS: picker/settings classes, icons/audio dependency, minute labels and KV screen boundaries")
-    print("ALL STATIC CHECKS PASSED. Run the app locally to verify touch, audio and visual layout.")
+
+    wheel_class = next((n for n in ast.parse(module_text).body
+                        if isinstance(n, ast.ClassDef) and n.name == "SpinnerWheel"), None)
+    if wheel_class is None:
+        fail("SpinnerWheel class missing")
+    touch_down = next((n for n in wheel_class.body
+                       if isinstance(n, ast.FunctionDef) and n.name == "on_touch_down"), None)
+    if touch_down is None or "_cancel_stale_touch" not in ast.unparse(touch_down):
+        fail("Spinner stale-touch recovery missing")
+    play_tick = next((n for n in ast.parse(module_text).body
+                      if isinstance(n, ast.FunctionDef) and n.name == "_play_spinner_tick"), None)
+    if play_tick is None:
+        fail("Spinner tick handler missing")
+    tick_source = ast.unparse(play_tick)
+    if "_load_spinner_tick(" in tick_source or "_schedule_spinner_tick_load(" not in tick_source:
+        fail("Spinner tick loading is not deferred")
+    if "Window.bind(size=self._sync_layout)" not in module_text:
+        fail("Responsive picker layout binding missing")
+
+    print("PASS: stale-touch recovery, deferred audio loading and responsive layout")
+    print("ALL STATIC CHECKS PASSED. Device testing is still required.")
     return 0
 
 
