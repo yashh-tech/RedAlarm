@@ -7,6 +7,8 @@ package.domain = org.yashtech
 
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,mp3,wav,ogg,m4a,json,ttf
+source.exclude_dirs = tests,__pycache__,.git,.github
+source.exclude_patterns = *.bak,RedAlarm_TimePicker_Test.py,TimePicker_Test.py,TimePicker_Test2.py,gemini_timepicker.py,apply_redalarm_launcher_icon_only.py,apply_redalarm_timepicker_integration.py,apply_patch*.py,RedAlarm_Alarm_Ringing_Hotfix.py,validate_redalarm_timepicker_integration.py,redalarm_timepicker_payload.py
 
 version = 1.0.0
 

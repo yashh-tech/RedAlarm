@@ -134,7 +134,9 @@ class _CrashLogger(ExceptionHandler):
         try:
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write("\n---- {} ----\n".format(datetime.datetime.now()))
-                traceback.print_exc(file=f)
+                traceback.print_exception(
+                    type(inst), inst, getattr(inst, "__traceback__", None), file=f
+                )
         except Exception:
             pass
         return ExceptionManager.PASS
@@ -2194,6 +2196,9 @@ class AlarmEditScreen(Screen):
         trigger_dt = compute_next_trigger_dt(alarm)
         print("[RedAlarm] alarm waiting for confirmation:", alarm.get("id"),
               "new:", is_new_alarm)
+        # Keep the confirmation on the editor settings page, not over Home.
+        self.ui.current = "settings"
+        app.root.current = "edit"
         self._show_alarm_confirmation(alarm, trigger_dt)
 
 
