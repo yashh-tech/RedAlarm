@@ -399,6 +399,9 @@ class SpinnerWheel(Widget):
 
     @staticmethod
     def _round_index(value):
+        value = float(value)
+        if not math.isfinite(value):
+            return 0
         return int(math.floor(value + 0.5))
 
     def _bounded(self, value):
@@ -409,8 +412,32 @@ class SpinnerWheel(Widget):
     def _set_position(self, value):
         self.position = self._bounded(value)
 
+    def _cancel_motion(self):
+        """Cancel old fling/animation/touch state before changing wheel values."""
+        event, self._fling_event = self._fling_event, None
+        if event is not None:
+            try:
+                event.cancel()
+            except Exception:
+                pass
+        try:
+            Animation.cancel_all(self, "position")
+        except Exception:
+            pass
+        self._settle_animation = None
+        touch, self._touch = self._touch, None
+        if touch is not None:
+            try:
+                if getattr(touch, "grab_current", None) is self:
+                    touch.ungrab(self)
+            except Exception:
+                pass
+        self._dragging = False
+        self._velocity = 0.0
+
     def set_value(self, value):
         """Set a wheel value programmatically without firing a false user change."""
+        self._cancel_motion()
         if value not in self.values:
             value = self.values[0]
         self._active_value = value
@@ -425,6 +452,10 @@ class SpinnerWheel(Widget):
 
     def _position_changed(self, *_):
         if not self._ready:
+            return
+        position = float(self.position)
+        if not math.isfinite(position):
+            self.position = float(self.values.index(self._active_value))
             return
         if not self.wrap:
             bounded = self._bounded(self.position)
@@ -455,10 +486,14 @@ class SpinnerWheel(Widget):
     def _redraw(self, *_):
         if not self._labels or self.width <= 0 or self.height <= 0:
             return
-        pos = self.position
+        pos = float(self.position)
+        if not math.isfinite(pos):
+            pos = float(self.values.index(self._active_value))
+        row_h = float(self.row_height)
+        if not math.isfinite(row_h) or row_h <= 0:
+            return
         center_idx = self._round_index(pos)
         cy = self.center_y
-        row_h = self.row_height
         for label, offset in zip(self._labels, (-2, -1, 0, 1, 2)):
             index = center_idx + offset
             delta = index - pos
@@ -501,10 +536,7 @@ class SpinnerWheel(Widget):
             self._set_position(self.position + (1 if touch.button == "scrollup" else -1))
             self._start_settle()
             return True
-        Animation.cancel_all(self, "position")
-        if self._fling_event:
-            self._fling_event.cancel()
-            self._fling_event = None
+        self._cancel_motion()
         self._dragging = True
         self._touch = touch
         self._touch_start_y = touch.y
@@ -517,9 +549,13 @@ class SpinnerWheel(Widget):
     def on_touch_move(self, touch):
         if touch.grab_current is not self or touch is not self._touch:
             return super().on_touch_move(touch)
+        row_height = float(self.row_height)
+        if not math.isfinite(row_height) or row_height <= 0:
+            self._cancel_motion()
+            return True
         now = time.monotonic()
         dt = max(0.001, now - self._last_motion_at)
-        delta_rows = ((touch.y - self._last_y) / self.row_height) * self.drag_sensitivity
+        delta_rows = ((touch.y - self._last_y) / row_height) * self.drag_sensitivity
         self._set_position(self.position + delta_rows)
         # Blend velocity samples and cap peak fling speed so quick mouse/touch
         # events don't send the wheel racing past several values.
@@ -540,8 +576,12 @@ class SpinnerWheel(Widget):
         self._touch = None
         self._dragging = False
         is_tap = abs(touch.y - self._touch_start_y) < dp(8)
+        row_height = float(self.row_height)
+        if not math.isfinite(row_height) or row_height <= 0:
+            self._start_settle()
+            return True
         if not self.wrap and is_tap:
-            target = self._bounded(self._round_index(self.position + (self.center_y - touch.y) / self.row_height))
+            target = self._bounded(self._round_index(self.position + (self.center_y - touch.y) / row_height))
             Animation.cancel_all(self, "position")
             Animation(position=float(target), duration=0.34, t="out_cubic").start(self)
             return True

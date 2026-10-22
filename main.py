@@ -1762,6 +1762,7 @@ class AlarmEditScreen(Screen):
         confirmation = getattr(self, "_confirmation_popup", None)
         if confirmation is not None and getattr(confirmation, "is_open", False):
             confirmation.dismiss()
+            self.ui.show_settings()
             return True
 
         sound_popup = getattr(self, "_sound_picker_popup", None)
@@ -2211,6 +2212,7 @@ class AlarmRingScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._sound = None
+        self._sound_stop_event = None
         self._countdown_event = None
         self._remaining_seconds = 0
         self._ringing = False
@@ -2282,6 +2284,12 @@ class AlarmRingScreen(Screen):
         configured_dismiss_seconds = max(
             1, int(alarm.get("auto_dismiss_sec", 5) or 5)
         )
+        # Stop audio at the selected duration; the UI grace below must not extend it.
+        if self._sound is not None:
+            self._sound_stop_event = Clock.schedule_once(
+                lambda _dt, ring_session=session: self._stop_ring_sound(ring_session),
+                float(configured_dismiss_seconds),
+            )
         # Extremely short settings need a startup/visibility grace so Android has
         # time to display the ringing UI before the activity closes.
         dismiss_grace_seconds = 1 if configured_dismiss_seconds <= 3 else 0
@@ -2294,6 +2302,23 @@ class AlarmRingScreen(Screen):
         self._countdown_event = Clock.schedule_interval(
             lambda dt: self._tick_countdown(dt, session), 1
         )
+
+    def _stop_ring_sound(self, session=None):
+        """Stop and release only the ringtone; keep the ring UI/countdown alive."""
+        if session is not None and (not self._ringing or session != self._ring_session):
+            return False
+        self._sound_stop_event = None
+        sound, self._sound = self._sound, None
+        if sound is not None:
+            try:
+                sound.stop()
+            except Exception:
+                pass
+            try:
+                sound.unload()
+            except Exception:
+                pass
+        return False
 
     def _try_load_and_play(self, path):
         """Kept for compatibility: plays `path` in a loop, or returns None."""
@@ -2321,16 +2346,13 @@ class AlarmRingScreen(Screen):
         if event is not None:
             event.cancel()
 
-        sound, self._sound = self._sound, None
-        if sound is not None:
+        sound_stop_event, self._sound_stop_event = self._sound_stop_event, None
+        if sound_stop_event is not None:
             try:
-                sound.stop()
+                sound_stop_event.cancel()
             except Exception:
                 pass
-            try:
-                sound.unload()
-            except Exception:
-                pass
+        self._stop_ring_sound()
 
         if ANDROID:
             try:
@@ -2437,10 +2459,10 @@ class RedAlarmApp(App):
 
         confirmation = getattr(edit_screen, "_confirmation_popup", None)
         if confirmation is not None and getattr(confirmation, "is_open", False):
-            confirmation.dismiss()  # on_dismiss discards only the unconfirmed candidate
-            # The confirmation was launched from the editor; reveal that previous page.
+            confirmation.dismiss()  # discard only the unconfirmed candidate
             if root.current != "edit":
                 root.current = "edit"
+            edit_screen.ui.show_settings()
             return True
 
         delete_popup = getattr(list_screen, "_delete_popup", None)
@@ -2460,11 +2482,18 @@ class RedAlarmApp(App):
             return True
         return False
 
+    def _on_request_close(self, *args, **kwargs):
+        """Route Android Back/close through the same modal-first handler."""
+        if not ANDROID:
+            return False
+        return bool(self._on_keyboard(Window, 27, 0, "", []))
+
     def build(self):
         self.title = APP_TITLE
         self._queued_intents = []
         self._startup_started = time.monotonic()
         Window.bind(on_keyboard=self._on_keyboard)
+        Window.bind(on_request_close=self._on_request_close)
 
         # Cheap, and wanted before anything else can go wrong: log
         # uncaught exceptions to a file instead of dying silently.
