@@ -1773,9 +1773,8 @@ class AlarmEditScreen(Screen):
         self.error_label = self.ui.settings_page.error_label
 
     def on_enter(self, *args):
-        # Time picker is now an inline page, not the legacy button-grid popup.
-        if self.ui.current != "picker":
-            self.ui.show_picker()
+        # The time wheel and all alarm settings now live on one page.
+        self.ui.show_settings()
 
     def handle_hardware_back(self):
         """Close the top modal first, then navigate one editor step backward."""
@@ -1798,11 +1797,8 @@ class AlarmEditScreen(Screen):
             time_popup.dismiss()
             return True
 
-        if self.ui.current == "settings":
-            self.ui.show_picker()
-            return True
-
-        # Back first closes the soft keyboard; a second Back leaves the editor.
+        # There is one editor page now: close the keyboard first, otherwise
+        # discard this unsaved edit and return to the screen that opened it.
         if getattr(self.label_input, "focus", False):
             self.label_input.focus = False
             return True
@@ -1817,7 +1813,7 @@ class AlarmEditScreen(Screen):
         self._return_screen = current_screen if current_screen in ("home", "list") else "home"
         self.error_message = ""
         self.error_label.text = ""
-        self.ui.current = "picker"
+        self.ui.current = "settings"
 
         if alarm_id is None:
             self.editing_id = ""
@@ -2081,9 +2077,10 @@ class AlarmEditScreen(Screen):
         return True
 
     def _on_confirmation_dismiss(self, popup, *_):
-        """Discard an unconfirmed candidate when the confirmation is dismissed."""
-        if getattr(self, "_confirmation_popup", None) is popup:
-            self._confirmation_popup = None
+        """Discard only this popup's candidate, never a newer confirmation."""
+        if getattr(self, "_confirmation_popup", None) is not popup:
+            return
+        self._confirmation_popup = None
         self._pending_confirmation_alarm = None
         self._pending_confirmation_previous = None
 
@@ -2179,7 +2176,8 @@ class AlarmEditScreen(Screen):
         # Cancel returns to settings and preserves the in-memory form; it does
         # not reach the commit/scheduling path.
         content.add_widget(RoundedActionButton("CANCEL", callback=cancel_review, accent=False,
-                                               size_hint_y=None, height=dp(44)))
+                                               size_hint_y=None, height=dp(44),
+                                               trigger_on_press=True))
         popup.open()
 
     def save_alarm(self):

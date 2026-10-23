@@ -696,7 +696,9 @@ class WheelPanel(BoxLayout):
         w, h = self.size
         self._bg.pos, self._bg.size = self.pos, self.size
         bx, bw = x - dp(10), w + dp(20)
-        by, bh, radius = self.center_y - dp(28), dp(56), dp(20)
+        selector_height = min(dp(56), float(getattr(self, "selector_height", dp(56))))
+        radius = min(dp(20), selector_height / 2.0)
+        by, bh = self.center_y - selector_height / 2.0, selector_height
         self._fill.pos, self._fill.size = (bx, by), (bw, bh)
         self._fill.radius = [radius]
         self._outline.rounded_rectangle = (bx, by, bw, bh, radius)
@@ -1364,26 +1366,53 @@ class AlarmAppSettingsPage(BoxLayout):
                                  spacing=dp(5), size_hint=(1, 1))
         self.add_widget(self.card)
 
-        header = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(106), spacing=dp(1))
-        header.add_widget(self._label("A L A R M   S E T T I N G S", 12.5, SUB, True, dp(21)))
-        preview = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(70), spacing=dp(5))
-        self.time_label = Label(text="07:16", color=TEXT, font_size=sp(44), bold=True,
-                                halign="left", valign="middle", size_hint=(None, 1), width=dp(174))
-        self.time_label.bind(size=lambda w, v: setattr(w, "text_size", v))
-        preview.add_widget(self.time_label)
-        self.ampm_label = Label(text="AM", color=(0.82, 0.82, 0.85, 1), font_size=sp(24), bold=True,
-                                halign="left", valign="middle", size_hint=(None, 1), width=dp(48))
-        self.ampm_label.bind(size=lambda w, v: setattr(w, "text_size", v))
-        preview.add_widget(self.ampm_label)
-        dot = StatusDot(diameter=dp(10), size_hint=(None, None))
-        dot_wrap = AnchorLayout(anchor_x="center", anchor_y="center", size_hint=(None, 1), width=dp(20))
-        dot_wrap.add_widget(dot)
-        preview.add_widget(dot_wrap)
-        preview.add_widget(Widget())
-        header.add_widget(preview)
+        # Single-page editor: the spinner is fixed above the scrollable settings.
+        header = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(25), spacing=dp(1))
+        header.add_widget(self._label("A L A R M   S E T T I N G S", 12.5, SUB, True, dp(22)))
         self.card.add_widget(header)
-        self.alarm_label_summary = self._label("Alarm", 10.5, MUTED, False, dp(17))
-        self.card.add_widget(self.alarm_label_summary)
+
+        self.wheel_panel = WheelPanel(size_hint_y=None, height=dp(190))
+        self.hour_wheel = SpinnerWheel(
+            list(range(1, 13)), self.editor.time_state["hour"],
+            lambda value: self._change_time("hour", value),
+            formatter=lambda value: str(value), wrap=True,
+        )
+        self.minute_wheel = SpinnerWheel(
+            list(range(60)), self.editor.time_state["minute"],
+            lambda value: self._change_time("minute", value),
+            formatter=lambda value: "{:02d}".format(value), wrap=True,
+        )
+        self.ampm_wheel = SpinnerWheel(
+            ["AM", "PM"], self.editor.time_state["ampm"],
+            lambda value: self._change_time("ampm", value),
+            formatter=lambda value: value, wrap=False,
+        )
+        for wheel in (self.hour_wheel, self.minute_wheel, self.ampm_wheel):
+            self.wheel_panel.add_widget(wheel)
+        self.card.add_widget(self.wheel_panel)
+        self._sync_wheel_layout()
+
+        label_block = BoxLayout(
+            orientation="vertical", size_hint_y=None, height=dp(52), spacing=dp(3)
+        )
+        label_block.add_widget(self._label("ALARM LABEL", 10.5, SUB, True, dp(16)))
+        self.label_input = AlarmLabelInput(
+            text=str(self.editor.time_state.get("label") or "Alarm"),
+            hint_text="Alarm name", multiline=False, write_tab=False,
+            background_normal="", background_active="",
+            background_color=(0, 0, 0, 0), foreground_color=TEXT,
+            hint_text_color=(0.43, 0.43, 0.47, 1), cursor_color=RED,
+            selection_color=(RED[0], RED[1], RED[2], 0.45),
+            font_size=sp(13.5), padding=(dp(12), dp(6)),
+            size_hint_y=None, height=dp(33),
+        )
+        add_rounded_background(
+            self.label_input, (0.065, 0.065, 0.075, 1), radius=13,
+            edge=(0.20, 0.20, 0.23, 1), edge_width=0.8,
+        )
+        self.label_input.bind(text=self._label_changed)
+        label_block.add_widget(self.label_input)
+        self.card.add_widget(label_block)
         self.card.add_widget(self._separator())
 
         scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=0,
@@ -1517,11 +1546,48 @@ class AlarmAppSettingsPage(BoxLayout):
     def _vibration_changed(self, value):
         self.editor.vibrate = bool(value)
 
+    def _sync_wheel_layout(self, *_):
+        height = max(dp(1), float(self.wheel_panel.height))
+        row_height = min(dp(56), height / 5.0)
+        self.wheel_panel.selector_height = row_height
+        self.wheel_panel._update()
+        for wheel in (self.hour_wheel, self.minute_wheel, self.ampm_wheel):
+            wheel.row_height = row_height
+            wheel._redraw()
+
+    def _change_time(self, key, value):
+        self.editor.time_state[key] = value
+        if key == "ampm":
+            self.editor.ampm = str(value).upper()
+        self.editor._picker_state_changed(self.editor.time_state)
+
+    def _label_changed(self, _widget, value):
+        self.editor.time_state["label"] = value
+
+    def set_values(self, hour, minute, ampm, label=""):
+        """Compatibility API used by AlarmEditScreen.load_alarm()."""
+        self.editor.time_state.update({
+            "hour": int(hour),
+            "minute": int(minute) % 60,
+            "ampm": "PM" if str(ampm).upper() == "PM" else "AM",
+            "label": str(label or "Alarm"),
+        })
+        self.editor.ampm = self.editor.time_state["ampm"]
+        self.label_input.text = self.editor.time_state["label"]
+        self.refresh_time()
+
     def refresh_time(self):
         state = self.editor.time_state
-        self.time_label.text = "{:02d}:{:02d}".format(int(state["hour"]), int(state["minute"]))
-        self.ampm_label.text = state["ampm"]
-        self.alarm_label_summary.text = (state.get("label") or "Alarm").strip() or "Alarm"
+        for wheel, value in (
+            (self.hour_wheel, int(state["hour"])),
+            (self.minute_wheel, int(state["minute"])),
+            (self.ampm_wheel, str(state["ampm"]).upper()),
+        ):
+            if getattr(wheel, "_active_value", None) != value:
+                wheel.set_value(value)
+        label = str(state.get("label") or "Alarm")
+        if not self.label_input.focus and self.label_input.text != label:
+            self.label_input.text = label
 
     def refresh_sound(self):
         self.sound_name_label.text = self.editor.sound_name or "Default beep"
@@ -1550,29 +1616,24 @@ class AlarmAppSettingsPage(BoxLayout):
 
 
 class AlarmEditorUI(ScreenManager):
-    """The real app's two-page alarm editor with an animated slide transition."""
+    """Single-page alarm editor with the time wheel and settings together."""
     def __init__(self, editor, **kwargs):
-        kwargs.setdefault("transition", SlideTransition(duration=0.28, direction="left"))
+        kwargs.setdefault("transition", SlideTransition(duration=0.0, direction="left"))
         super().__init__(**kwargs)
         self.editor = editor
-        self.picker_screen = Screen(name="picker")
         self.settings_screen = Screen(name="settings")
-        self.picker_page = TimePickerPage(
-            editor.time_state, self.show_settings,
-            on_time_change=editor._picker_state_changed,
-        )
-        self.settings_page = AlarmAppSettingsPage(editor, self.show_picker)
-        self.picker_screen.add_widget(self.picker_page)
+        self.settings_page = AlarmAppSettingsPage(editor, editor.cancel_edit)
+        # Compatibility aliases: old main.py call sites can keep using picker_page.
+        self.picker_screen = self.settings_screen
+        self.picker_page = self.settings_page
         self.settings_screen.add_widget(self.settings_page)
-        self.add_widget(self.picker_screen)
         self.add_widget(self.settings_screen)
-        self.current = "picker"
+        self.current = "settings"
 
     def show_settings(self):
         self.settings_page.refresh_from_editor()
-        self.transition.direction = "left"
         self.current = "settings"
 
     def show_picker(self):
-        self.transition.direction = "right"
-        self.current = "picker"
+        # Legacy entry point now keeps the user on the combined editor page.
+        self.show_settings()
