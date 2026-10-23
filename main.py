@@ -2068,7 +2068,7 @@ class AlarmEditScreen(Screen):
             return False
 
         if getattr(active, "is_open", False):
-            active.dismiss()
+            active.dismiss(animation=False)
         else:
             # Clean up safely if dismissal has already started.
             self._on_confirmation_dismiss(active)
@@ -2173,13 +2173,13 @@ class AlarmEditScreen(Screen):
                                                size_hint_y=None, height=dp(44)))
 
         def cancel_review(_button=None):
-            self.cancel_confirmation(popup)
+            # Dismiss after the release event completes; do not destroy the button mid-dispatch.
+            Clock.schedule_once(lambda _dt: self.cancel_confirmation(popup), 0)
 
         # Cancel returns to settings and preserves the in-memory form; it does
         # not reach the commit/scheduling path.
         content.add_widget(RoundedActionButton("CANCEL", callback=cancel_review, accent=False,
-                                               size_hint_y=None, height=dp(44),
-                                               trigger_on_press=True))
+                                               size_hint_y=None, height=dp(44)))
         popup.open()
 
     def save_alarm(self):

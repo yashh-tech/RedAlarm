@@ -208,16 +208,13 @@
             size_hint_y: None
             height: "48dp"
 
-            Button:
-                text: "<"
-                font_size: "24sp"
-                bold: True
+            HomeButton:
+                text: "←  BACK"
+                font_size: "12sp"
                 size_hint: None, None
-                size: "48dp", "48dp"
-                background_normal: ""
-                background_down: ""
-                background_color: 0, 0, 0, 0
-                color: COL_TEXT
+                size: "96dp", "42dp"
+                bg_color: 0.085, 0.075, 0.075, 1
+                text_color: COL_TEXT
                 on_release: root.go_home()
 
             Label:
