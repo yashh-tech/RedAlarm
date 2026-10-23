@@ -607,10 +607,18 @@ class SpinnerWheel(Widget):
         if not math.isfinite(row_height) or row_height <= 0:
             self._start_settle()
             return True
-        if not self.wrap and is_tap:
-            target = self._bounded(self._round_index(self.position + (self.center_y - touch.y) / row_height))
+        if is_tap:
+            offset = (self.center_y - touch.y) / max(1.0, row_height)
+            target = self._bounded(
+                self._round_index(self.position + offset)
+            )
+            self._velocity = 0.0
             Animation.cancel_all(self, "position")
-            Animation(position=float(target), duration=0.34, t="out_cubic").start(self)
+            Animation(
+                position=float(target),
+                duration=0.20,
+                t="out_cubic",
+            ).start(self)
             return True
         if abs(self._velocity) > 0.70:
             self._fling_event = Clock.schedule_interval(self._fling_step, 1.0 / 60.0)

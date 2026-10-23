@@ -1783,7 +1783,9 @@ class AlarmEditScreen(Screen):
         # when called directly by an editor-level callback.
         confirmation = getattr(self, "_confirmation_popup", None)
         if confirmation is not None and getattr(confirmation, "is_open", False):
-            return self.cancel_confirmation(confirmation)
+            self.cancel_confirmation(confirmation)
+            return True
+            
 
         sound_popup = getattr(self, "_sound_picker_popup", None)
         if sound_popup is not None and getattr(sound_popup, "is_open", False):
@@ -2058,15 +2060,23 @@ class AlarmEditScreen(Screen):
     def cancel_confirmation(self, popup=None):
         """Cancel review without saving; keep entered editor fields intact."""
         active = getattr(self, "_confirmation_popup", None)
-        if active is None or not getattr(active, "is_open", False):
+
+        if active is None:
             return False
+
         if popup is not None and popup is not active:
             return False
-        # Dismissal clears only the candidate copy, not the user's form fields.
-        active.dismiss()
+
+        if getattr(active, "is_open", False):
+            active.dismiss()
+        else:
+            # Clean up safely if dismissal has already started.
+            self._on_confirmation_dismiss(active)
+
         app = App.get_running_app()
         if app.root is not None and app.root.current != "edit":
             app.root.current = "edit"
+
         self.ui.show_settings()
         return True
 
@@ -2126,7 +2136,7 @@ class AlarmEditScreen(Screen):
 
         popup = Popup(title="", content=content, size_hint=(0.88, None), height=dp(510),
                       background="atlas://data/images/defaulttheme/modalview-background",
-                      background_color=(0, 0, 0, 0), separator_height=0, auto_dismiss=False)
+                      background_color=(0, 0, 0, 0), separator_height=0, auto_dismiss=True)
         self._confirmation_popup = popup
         popup.bind(on_dismiss=self._on_confirmation_dismiss)
 
