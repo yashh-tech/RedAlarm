@@ -2178,7 +2178,8 @@ class AlarmEditScreen(Screen):
         # Cancel returns to settings and preserves the in-memory form; it does
         # not reach the commit/scheduling path.
         content.add_widget(RoundedActionButton("CANCEL", callback=cancel_review, accent=False,
-                                               size_hint_y=None, height=dp(44)))
+                                               size_hint_y=None, height=dp(44),
+                                               trigger_on_press=True))
         popup.open()
 
     def save_alarm(self):
@@ -2497,7 +2498,8 @@ class RedAlarmApp(App):
         confirmation = getattr(edit_screen, "_confirmation_popup", None)
         if confirmation is not None and getattr(confirmation, "is_open", False):
             # Use the same no-save path as the on-screen CANCEL action.
-            return edit_screen.cancel_confirmation(confirmation)
+            edit_screen.cancel_confirmation(confirmation)
+            return True
 
         delete_popup = getattr(list_screen, "_delete_popup", None)
         if delete_popup is not None and getattr(delete_popup, "is_open", False):

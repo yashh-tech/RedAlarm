@@ -566,22 +566,20 @@ class SpinnerWheel(Widget):
         return True
 
     def on_touch_move(self, touch):
-        if touch is self._touch and touch.grab_current is not self:
-            self._cancel_motion()
-            self._start_settle()
-            return True
-        if touch.grab_current is not self or touch is not self._touch:
+        if touch is not self._touch:
             return super().on_touch_move(touch)
+
         row_height = float(self.row_height)
         if not math.isfinite(row_height) or row_height <= 0:
             self._cancel_motion()
             return True
+
         now = time.monotonic()
         dt = max(0.001, now - self._last_motion_at)
         delta_rows = ((touch.y - self._last_y) / row_height) * self.drag_sensitivity
         self._set_position(self.position + delta_rows)
-        # Blend velocity samples and cap peak fling speed so quick mouse/touch
-        # events don't send the wheel racing past several values.
+
+        # Smoothed and capped velocity prevents noisy events causing large jumps.
         instantaneous = delta_rows / dt
         estimate = self._velocity * 0.58 + instantaneous * 0.42
         self._velocity = max(
@@ -593,20 +591,25 @@ class SpinnerWheel(Widget):
         return True
 
     def on_touch_up(self, touch):
-        if touch is self._touch and touch.grab_current is not self:
-            self._cancel_motion()
-            self._start_settle()
-            return True
-        if touch.grab_current is not self or touch is not self._touch:
+        if touch is not self._touch:
             return super().on_touch_up(touch)
-        touch.ungrab(self)
+
+        try:
+            touch.ungrab(self)
+        except Exception:
+            pass
+
         self._touch = None
         self._dragging = False
         is_tap = abs(touch.y - self._touch_start_y) < dp(8)
         row_height = float(self.row_height)
+
         if not math.isfinite(row_height) or row_height <= 0:
+            self._cancel_motion()
             self._start_settle()
             return True
+
+        # Tapping any visible row selects it; dragging and fling stay supported.
         if is_tap:
             offset = (self.center_y - touch.y) / max(1.0, row_height)
             target = self._bounded(
@@ -620,8 +623,11 @@ class SpinnerWheel(Widget):
                 t="out_cubic",
             ).start(self)
             return True
+
         if abs(self._velocity) > 0.70:
-            self._fling_event = Clock.schedule_interval(self._fling_step, 1.0 / 60.0)
+            self._fling_event = Clock.schedule_interval(
+                self._fling_step, 1.0 / 60.0
+            )
         else:
             self._start_settle()
         return True
@@ -706,7 +712,14 @@ class WheelPanel(BoxLayout):
 
 
 class RoundedActionButton(Button):
-    def __init__(self, text, callback=None, accent=False, **kwargs):
+    def __init__(
+        self,
+        text,
+        callback=None,
+        accent=False,
+        trigger_on_press=False,
+        **kwargs
+    ):
         super().__init__(
             text=text, background_normal="", background_down="",
             background_color=(0, 0, 0, 0), color=TEXT if accent else SUB,
@@ -727,7 +740,10 @@ class RoundedActionButton(Button):
             )
         self.bind(pos=sync, size=sync)
         if callback:
-            self.bind(on_release=lambda *_: callback())
+            if trigger_on_press:
+                self.bind(on_press=lambda *_: callback())
+            else:
+                self.bind(on_release=lambda *_: callback())
 
 
 class AlarmLabelInput(TextInput):
