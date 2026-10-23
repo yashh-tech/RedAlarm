@@ -281,6 +281,9 @@ _SPINNER_TICK_SOUNDS = []
 _SPINNER_TICK_LAST_AT = 0.0
 _SPINNER_TICK_CURSOR = 0
 _SPINNER_TICK_PATH = None
+_SPINNER_TICK_LOAD_SCHEDULED = False
+_SPINNER_TICK_LOAD_COMPLETE = False
+_SPINNER_TICK_LOAD_ATTEMPTS = 0
 
 
 def _spinner_tick_path():
@@ -311,38 +314,49 @@ def _spinner_tick_path():
     return path
 
 
-def _load_spinner_tick():
-    """Load separate voices so fast wheel changes do not silence every other tick."""
-    global _SPINNER_TICK_SOUNDS
-    if _SPINNER_TICK_SOUNDS:
-        return _SPINNER_TICK_SOUNDS
+def _schedule_spinner_tick_load(*_):
+    """Begin non-gesture loading; all spinner instances share one preload."""
+    global _SPINNER_TICK_LOAD_SCHEDULED
+    if _SPINNER_TICK_SOUNDS or _SPINNER_TICK_LOAD_COMPLETE or _SPINNER_TICK_LOAD_SCHEDULED:
+        return
+    _SPINNER_TICK_LOAD_SCHEDULED = True
+    Clock.schedule_once(_load_spinner_tick, 0.15)
+
+
+def _load_spinner_tick(_dt=0):
+    """Load at most one SoundLoader voice per scheduled callback."""
+    global _SPINNER_TICK_LOAD_ATTEMPTS, _SPINNER_TICK_LOAD_SCHEDULED
+    global _SPINNER_TICK_LOAD_COMPLETE
+    if _SPINNER_TICK_LOAD_COMPLETE:
+        _SPINNER_TICK_LOAD_SCHEDULED = False
+        return
     try:
         path = _spinner_tick_path()
-        voices = []
-        for _ in range(4):
-            sound = SoundLoader.load(path)
-            if sound is not None:
-                sound.volume = 0.45
-                voices.append(sound)
-        _SPINNER_TICK_SOUNDS = voices
+        sound = SoundLoader.load(path)
+        if sound is not None:
+            sound.volume = 0.45
+            _SPINNER_TICK_SOUNDS.append(sound)
     except Exception as exc:
-        # Audio failure must never prevent time selection.
-        print("[RedAlarm test] Spinner tick audio unavailable:", exc)
-        _SPINNER_TICK_SOUNDS = []
-    return _SPINNER_TICK_SOUNDS
+        # Tick audio is optional and must never block time selection.
+        print("[RedAlarm] spinner tick preload unavailable:", exc)
+    _SPINNER_TICK_LOAD_ATTEMPTS += 1
+    if len(_SPINNER_TICK_SOUNDS) < 4 and _SPINNER_TICK_LOAD_ATTEMPTS < 4:
+        Clock.schedule_once(_load_spinner_tick, 0.06)
+    else:
+        _SPINNER_TICK_LOAD_COMPLETE = True
+        _SPINNER_TICK_LOAD_SCHEDULED = False
 
 
 def _play_spinner_tick():
-    """Play a short, audible tick when a different number crosses the center."""
+    """Play a preloaded voice only; never create files or load audio from touch."""
     global _SPINNER_TICK_LAST_AT, _SPINNER_TICK_CURSOR
     now = time.monotonic()
-    # A small debounce avoids a buzz on very fast flicks but still ticks naturally.
     if now - _SPINNER_TICK_LAST_AT < 0.028:
         return
-    voices = _load_spinner_tick()
-    if not voices:
+    if not _SPINNER_TICK_SOUNDS:
+        _schedule_spinner_tick_load()
         return
-    sound = voices[_SPINNER_TICK_CURSOR % len(voices)]
+    sound = _SPINNER_TICK_SOUNDS[_SPINNER_TICK_CURSOR % len(_SPINNER_TICK_SOUNDS)]
     _SPINNER_TICK_CURSOR += 1
     try:
         sound.stop()
@@ -350,7 +364,7 @@ def _play_spinner_tick():
         sound.play()
         _SPINNER_TICK_LAST_AT = now
     except Exception as exc:
-        print("[RedAlarm test] Could not play spinner tick:", exc)
+        print("[RedAlarm] spinner tick playback unavailable:", exc)
 
 
 class SpinnerWheel(Widget):
@@ -395,6 +409,7 @@ class SpinnerWheel(Widget):
             self._labels.append(label)
             self.add_widget(label)
         self.bind(position=self._position_changed, pos=self._redraw, size=self._redraw)
+        _schedule_spinner_tick_load()
         Clock.schedule_once(self._finish_init, 0)
 
     @staticmethod
@@ -530,6 +545,10 @@ class SpinnerWheel(Widget):
             label.text_size = label.size
 
     def on_touch_down(self, touch):
+        # Android may drop pointer-up during interruption. Recover an old grab
+        # before processing any fresh pointer, including one outside the wheel.
+        if self._touch is not None and touch is not self._touch:
+            self._cancel_motion()
         if not self.collide_point(*touch.pos):
             return super().on_touch_down(touch)
         if getattr(touch, "is_mouse_scrolling", False):
@@ -547,6 +566,10 @@ class SpinnerWheel(Widget):
         return True
 
     def on_touch_move(self, touch):
+        if touch is self._touch and touch.grab_current is not self:
+            self._cancel_motion()
+            self._start_settle()
+            return True
         if touch.grab_current is not self or touch is not self._touch:
             return super().on_touch_move(touch)
         row_height = float(self.row_height)
@@ -570,6 +593,10 @@ class SpinnerWheel(Widget):
         return True
 
     def on_touch_up(self, touch):
+        if touch is self._touch and touch.grab_current is not self:
+            self._cancel_motion()
+            self._start_settle()
+            return True
         if touch.grab_current is not self or touch is not self._touch:
             return super().on_touch_up(touch)
         touch.ungrab(self)

@@ -1155,6 +1155,12 @@ def load_and_play(path, loop=True, volume=1.0):
 #    use them by class name)
 # ======================================================================
 
+def _seconds_to_next_wall_second():
+    """Delay until the next wall-clock second boundary (recomputed each tick)."""
+    now = datetime.datetime.now()
+    return max(0.001, (1000000 - now.microsecond) / 1000000.0)
+
+
 class AnalogClock(Widget):
     """Canvas-drawn analog clock. Fills whatever box it is given and draws
     a centred circle, so it never gets squashed into an ellipse."""
@@ -1164,7 +1170,9 @@ class AnalogClock(Widget):
         self._last_second = None
         self._numerals = {}
         self.bind(pos=self._force_redraw, size=self._force_redraw)
-        self._tick_event = Clock.schedule_interval(self._tick, 0.1)
+        self._tick_event = Clock.schedule_once(
+            self._tick, _seconds_to_next_wall_second()
+        )
         self._redraw()
 
     def _force_redraw(self, *_):
@@ -1172,8 +1180,12 @@ class AnalogClock(Widget):
         self._redraw()
 
     def _tick(self, dt):
-        if datetime.datetime.now().second != self._last_second:
-            self._redraw()
+        # Re-align after each tick instead of accumulating interval drift.
+        self._tick_event = None
+        self._redraw()
+        self._tick_event = Clock.schedule_once(
+            self._tick, _seconds_to_next_wall_second()
+        )
 
     def _numeral_texture(self, number, font_px):
         key = (number, font_px)
@@ -1345,15 +1357,25 @@ class HomeScreen(Screen):
     _next_alarm_event = None
 
     def on_pre_enter(self, *args):
+        self._refresh_clock_displays()
+        if self._next_alarm_event is None:
+            self._next_alarm_event = Clock.schedule_once(
+                self._wall_clock_tick, _seconds_to_next_wall_second()
+            )
+
+    def _refresh_clock_displays(self):
         self.date_text = datetime.datetime.now().strftime("%A, %d %B")
         self._refresh_next_alarm()
-        if self._next_alarm_event is None:
-            # Ticks every second so the countdown at the bottom of the
-            # clock is actually live, not a stale snapshot from whenever
-            # you last opened this screen.
-            self._next_alarm_event = Clock.schedule_interval(
-                lambda dt: self._refresh_next_alarm(), 1
-            )
+
+    def _wall_clock_tick(self, _dt):
+        self._next_alarm_event = None
+        if self.manager is None or self.manager.current != self.name:
+            return
+        self._refresh_clock_displays()
+        # Recompute from wall time on each tick to prevent accumulated drift.
+        self._next_alarm_event = Clock.schedule_once(
+            self._wall_clock_tick, _seconds_to_next_wall_second()
+        )
 
     def on_leave(self, *args):
         if self._next_alarm_event is not None:
@@ -1761,9 +1783,7 @@ class AlarmEditScreen(Screen):
         # when called directly by an editor-level callback.
         confirmation = getattr(self, "_confirmation_popup", None)
         if confirmation is not None and getattr(confirmation, "is_open", False):
-            confirmation.dismiss()
-            self.ui.show_settings()
-            return True
+            return self.cancel_confirmation(confirmation)
 
         sound_popup = getattr(self, "_sound_picker_popup", None)
         if sound_popup is not None and getattr(sound_popup, "is_open", False):
@@ -1888,22 +1908,6 @@ class AlarmEditScreen(Screen):
         self.ui.picker_page.set_values(hour12, minute, ampm, self.time_state.get("label", ""))
         self.ui.settings_page.refresh_time()
 
-    def open_time_picker(self):
-        try:
-            h12 = int(self.ids.input_hour.text)
-        except (TypeError, ValueError):
-            h12 = 12
-        try:
-            minute = int(self.ids.input_minute.text)
-        except (TypeError, ValueError):
-            minute = 0
-        popup = TimePickerPopup(h12, minute, self.ampm, self._apply_picked_time)
-        popup.open()
-
-    def _apply_picked_time(self, hour12, minute, ampm):
-        self.ids.input_hour.text = "{:02d}".format(hour12)
-        self.ids.input_minute.text = "{:02d}".format(minute)
-        self.ampm = ampm
 
     def choose_builtin_sound(self):
         """Select and preview the app's existing default beep."""
@@ -2051,6 +2055,21 @@ class AlarmEditScreen(Screen):
         return actual_trigger_dt
 
 
+    def cancel_confirmation(self, popup=None):
+        """Cancel review without saving; keep entered editor fields intact."""
+        active = getattr(self, "_confirmation_popup", None)
+        if active is None or not getattr(active, "is_open", False):
+            return False
+        if popup is not None and popup is not active:
+            return False
+        # Dismissal clears only the candidate copy, not the user's form fields.
+        active.dismiss()
+        app = App.get_running_app()
+        if app.root is not None and app.root.current != "edit":
+            app.root.current = "edit"
+        self.ui.show_settings()
+        return True
+
     def _on_confirmation_dismiss(self, popup, *_):
         """Discard an unconfirmed candidate when the confirmation is dismissed."""
         if getattr(self, "_confirmation_popup", None) is popup:
@@ -2105,7 +2124,7 @@ class AlarmEditScreen(Screen):
             details_panel.add_widget(row)
         content.add_widget(details_panel)
 
-        popup = Popup(title="", content=content, size_hint=(0.88, None), height=dp(455),
+        popup = Popup(title="", content=content, size_hint=(0.88, None), height=dp(510),
                       background="atlas://data/images/defaulttheme/modalview-background",
                       background_color=(0, 0, 0, 0), separator_height=0, auto_dismiss=False)
         self._confirmation_popup = popup
@@ -2141,6 +2160,14 @@ class AlarmEditScreen(Screen):
                 Clock.schedule_once(lambda _dt: android_show_toast(message), 0.12)
 
         content.add_widget(RoundedActionButton("DONE", callback=finish, accent=True,
+                                               size_hint_y=None, height=dp(44)))
+
+        def cancel_review(_button=None):
+            self.cancel_confirmation(popup)
+
+        # Cancel returns to settings and preserves the in-memory form; it does
+        # not reach the commit/scheduling path.
+        content.add_widget(RoundedActionButton("CANCEL", callback=cancel_review, accent=False,
                                                size_hint_y=None, height=dp(44)))
         popup.open()
 
@@ -2459,11 +2486,8 @@ class RedAlarmApp(App):
 
         confirmation = getattr(edit_screen, "_confirmation_popup", None)
         if confirmation is not None and getattr(confirmation, "is_open", False):
-            confirmation.dismiss()  # discard only the unconfirmed candidate
-            if root.current != "edit":
-                root.current = "edit"
-            edit_screen.ui.show_settings()
-            return True
+            # Use the same no-save path as the on-screen CANCEL action.
+            return edit_screen.cancel_confirmation(confirmation)
 
         delete_popup = getattr(list_screen, "_delete_popup", None)
         if delete_popup is not None and getattr(delete_popup, "is_open", False):

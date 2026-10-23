@@ -27,6 +27,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Run Python regression checks
+        shell: bash
+        run: |
+          python -m compileall -q main.py redalarm_timepicker.py validate_redalarm_timepicker_integration.py
+          python validate_redalarm_timepicker_integration.py
+
       - name: Install System Dependencies
         run: |
           sudo apt-get update
