@@ -164,13 +164,17 @@
             rounded_rectangle: (self.x, self.y, self.width, self.height, dp(16))
             width: dp(1.0)
 
-    AlarmSelectionIndicator:
-        row: root
-        selected: root.selected
-        size_hint_x: None
-        width: dp(25)
-        opacity: 1
-        disabled: False
+    AnchorLayout:
+        size_hint: None, 1
+        width: dp(30)
+        anchor_x: "center"
+        anchor_y: "center"
+
+        AlarmSelectionIndicator:
+            row: root
+            selected: root.selected
+            size_hint: None, None
+            size: dp(24), dp(24)
 
     AlarmInfoButton:
         row: root

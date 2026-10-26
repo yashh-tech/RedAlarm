@@ -201,6 +201,20 @@ def main() -> int:
         fail("Label input disabled text must remain readable")
     print("PASS: permanent checkboxes/action bar, individual delete confirmation, and bulk actions")
     print("PASS: readable label text, text keyboard, suggestions, and 25-word cap")
+    if 'size: dp(24), dp(24)' not in kv_text or 'anchor_y: "center"' not in kv_text:
+        fail("Alarm selection checkbox must be a fixed-size, vertically centred control")
+    ring_activity_path = ROOT / "android_src" / "org" / "yashtech" / "redalarm" / "RedAlarmRingActivity.java"
+    ring_service_path = ROOT / "android_src" / "org" / "yashtech" / "redalarm" / "RedAlarmRingingService.java"
+    if not ring_activity_path.is_file() or not ring_service_path.is_file():
+        fail("Native ringing activity/service is missing")
+    ring_activity_text = ring_activity_path.read_text(encoding="utf-8")
+    ring_service_text = ring_service_path.read_text(encoding="utf-8")
+    if 'countdownTitle.setText("AUTO-DISMISS IN")' not in ring_activity_text or 'countdownValue.setText' not in ring_activity_text:
+        fail("Native lock-screen alarm must display an auto-dismiss countdown")
+    if 'ring_started_elapsed:' not in ring_service_text or 'ring_duration_sec:' not in ring_service_text:
+        fail("Native ringing service must save the visible countdown deadline")
+    print("PASS: alarm checkboxes use a fixed-size centred layout")
+    print("PASS: native lock-screen ring screen displays the auto-dismiss countdown")
     print("PASS: active screen boundaries and obsolete picker handlers")
     print("ALL STATIC REGRESSION CHECKS PASSED; device tests are still required.")
     return 0

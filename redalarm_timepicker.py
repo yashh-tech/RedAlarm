@@ -756,13 +756,20 @@ class AlarmLabelInput(TextInput):
         # Do not let disabled-field defaults make the label look like ghost text.
         kwargs["foreground_color"] = (1, 1, 1, 1)
         kwargs["disabled_foreground_color"] = (1, 1, 1, 1)
-        kwargs["hint_text_color"] = (0.72, 0.72, 0.76, 1)
+        kwargs["hint_text_color"] = (0.92, 0.92, 0.95, 1)
         # Android only offers its normal word suggestions for a text IME.
         kwargs["input_type"] = "text"
         kwargs["keyboard_suggestions"] = True
         kwargs["disabled"] = False
         kwargs["opacity"] = 1
         super().__init__(**kwargs)
+        self._apply_readable_colors()
+        self.bind(disabled=self._apply_readable_colors)
+
+    def _apply_readable_colors(self, *_):
+        self.foreground_color = (1, 1, 1, 1)
+        self.disabled_foreground_color = (1, 1, 1, 1)
+        self.hint_text_color = (0.92, 0.92, 0.95, 1)
 
     def insert_text(self, substring, from_undo=False):
         if from_undo:

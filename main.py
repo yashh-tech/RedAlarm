@@ -1418,7 +1418,7 @@ class AlarmSelectionIndicator(ButtonBehavior, Widget):
 
     def _redraw(self, *_):
         self.canvas.clear()
-        side = min(dp(22), self.width, self.height * 0.72)
+        side = min(dp(22), self.width, self.height)
         if side < dp(2):
             return
         x, y = self.center_x - side / 2.0, self.center_y - side / 2.0

@@ -52,18 +52,23 @@ public final class RedAlarmRingingService extends Service {
         handler.removeCallbacks(timeout);
         alarmId = id;
         session++;
+        int duration = Math.max(1, Math.min(10800, config.optInt("auto_dismiss_sec", 5)));
+        final long ringStartedElapsed = android.os.SystemClock.elapsedRealtime();
+        getSharedPreferences("redalarm_native_alarms_v1", MODE_PRIVATE).edit()
+                .putBoolean("ringing:" + id, true).putString("ringing_id", id)
+                .putLong("ring_started_elapsed:" + id, ringStartedElapsed)
+                .putInt("ring_duration_sec:" + id, duration).apply();
         ensureRingChannel();
         Notification notification = buildNotification(id, config);
         try { startForeground(NOTIFICATION_ID, notification); }
         catch (Throwable e) { android.util.Log.e("RedAlarmNative", "startForeground failed", e); }
-        getSharedPreferences("redalarm_native_alarms_v1", MODE_PRIVATE).edit()
-                .putBoolean("ringing:" + id, true).putString("ringing_id", id).apply();
-        acquireWakeLock(Math.max(1, config.optInt("auto_dismiss_sec", 5)) + 15);
+        acquireWakeLock(duration + 15);
         startAudio(config);
         if (config.optBoolean("vibrate", false)) startVibration();
-        int duration = Math.max(1, Math.min(10800, config.optInt("auto_dismiss_sec", 5)));
         final int run = session;
-        handler.postDelayed(new Runnable() { @Override public void run() { if (run == session) stopAndFinish(); } }, duration * 1000L);
+        long remainingDelay = Math.max(1L, ringStartedElapsed + duration * 1000L
+                - android.os.SystemClock.elapsedRealtime());
+        handler.postDelayed(new Runnable() { @Override public void run() { if (run == session) stopAndFinish(); } }, remainingDelay);
         return START_NOT_STICKY;
     }
 
@@ -200,7 +205,9 @@ public final class RedAlarmRingingService extends Service {
         handler.removeCallbacks(timeout);
         stopCurrentPlayback();
         getSharedPreferences("redalarm_native_alarms_v1", MODE_PRIVATE).edit()
-                .putBoolean("ringing:" + alarmId, false).remove("ringing_id").apply();
+                .putBoolean("ringing:" + alarmId, false).remove("ringing_id")
+                        .remove("ring_started_elapsed:" + alarmId)
+                        .remove("ring_duration_sec:" + alarmId).apply();
         notifyRingFinished();
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.cancel(NOTIFICATION_ID);
@@ -215,7 +222,9 @@ public final class RedAlarmRingingService extends Service {
         stopCurrentPlayback();
         if (!TextUtils.isEmpty(alarmId)) {
             getSharedPreferences("redalarm_native_alarms_v1", MODE_PRIVATE).edit()
-                    .putBoolean("ringing:" + alarmId, false).remove("ringing_id").apply();
+                    .putBoolean("ringing:" + alarmId, false).remove("ringing_id")
+                            .remove("ring_started_elapsed:" + alarmId)
+                            .remove("ring_duration_sec:" + alarmId).apply();
         }
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.cancel(NOTIFICATION_ID);
