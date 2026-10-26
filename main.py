@@ -1338,6 +1338,7 @@ class IOSToggle(ButtonBehavior, Widget):
     `active` BooleanProperty, so `on_active:` works in kv like a Switch."""
 
     active = BooleanProperty(False)
+    row = ObjectProperty(None)
     _thumb = NumericProperty(0)   # 0 = left/off, 1 = right/on (animated)
 
     def __init__(self, **kwargs):
@@ -1353,6 +1354,14 @@ class IOSToggle(ButtonBehavior, Widget):
         self._redraw()
 
     def on_release(self):
+        row = self.row
+        if row is not None:
+            row.release_child_touch()
+            if row._long_press_triggered:
+                row._long_press_triggered = False
+                return
+            if row.list_screen is not None and row.list_screen.selection_mode:
+                return
         self.active = not self.active
 
     def _redraw(self, *_):
@@ -1397,6 +1406,41 @@ class DigitInput(TextInput):
             Clock.schedule_once(lambda dt: self.select_all(), 0)
 
 
+class AlarmSelectionIndicator(ButtonBehavior, Widget):
+    """A compact checkbox shown only while the alarm list is in selection mode."""
+    selected = BooleanProperty(False)
+    row = ObjectProperty(None)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(pos=self._redraw, size=self._redraw, selected=self._redraw)
+        self._redraw()
+
+    def _redraw(self, *_):
+        self.canvas.clear()
+        side = min(dp(22), self.width, self.height * 0.72)
+        if side < dp(2):
+            return
+        x, y = self.center_x - side / 2.0, self.center_y - side / 2.0
+        radius = min(dp(5), side / 4.0)
+        with self.canvas:
+            if self.selected:
+                Color(rgba=(0.88, 0.12, 0.15, 1))
+                RoundedRectangle(pos=(x, y), size=(side, side), radius=[radius])
+                Color(rgba=(1, 1, 1, 1))
+                Line(points=[x + side * 0.22, y + side * 0.53,
+                             x + side * 0.43, y + side * 0.31,
+                             x + side * 0.79, y + side * 0.72], width=dp(1.8), cap="round")
+            else:
+                Color(rgba=(0.34, 0.34, 0.36, 1))
+                Line(rounded_rectangle=(x, y, side, side, radius), width=dp(1.35))
+
+    def on_release(self):
+        if self.row is not None and self.row.list_screen is not None:
+            self.row.release_child_touch()
+            self.row.on_row_press()
+
+
 class AlarmInfoButton(ButtonBehavior, BoxLayout):
     """The tappable time/label area of a row (opens the edit screen).
     Gets its own text properties (bound from AlarmRow in alarm.kv) instead
@@ -1408,6 +1452,7 @@ class AlarmInfoButton(ButtonBehavior, BoxLayout):
 
     def on_release(self):
         if self.row is not None:
+            self.row.release_child_touch()
             self.row.on_row_press()
 
 
@@ -1490,8 +1535,68 @@ class AlarmRow(BoxLayout):
     sub_text = StringProperty("")
     enabled = BooleanProperty(True)
     list_screen = ObjectProperty(None)
+    selection_mode = BooleanProperty(False)
+    selected = BooleanProperty(False)
+    LONG_PRESS_SECONDS = 0.55
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._long_press_event = None
+        self._press_touch = None
+        self._press_origin = None
+        self._long_press_triggered = False
+
+    def release_child_touch(self):
+        event, self._long_press_event = self._long_press_event, None
+        if event is not None:
+            try:
+                event.cancel()
+            except Exception:
+                pass
+        self._press_touch = None
+        self._press_origin = None
+
+    def _fire_long_press(self, touch):
+        self._long_press_event = None
+        if self._press_touch is not touch or self.list_screen is None:
+            return
+        if not self.collide_point(*touch.pos) or self.list_screen.selection_mode:
+            return
+        self._long_press_triggered = True
+        self.list_screen.begin_selection(self.alarm_id)
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            self.release_child_touch()
+            self._long_press_triggered = False
+            if self.list_screen is not None and not self.list_screen.selection_mode:
+                self._press_touch = touch
+                self._press_origin = tuple(touch.pos)
+                self._long_press_event = Clock.schedule_once(
+                    lambda _dt, held=touch: self._fire_long_press(held),
+                    self.LONG_PRESS_SECONDS,
+                )
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if self._press_touch is touch and not self._long_press_triggered and self._press_origin:
+            if (abs(touch.x - self._press_origin[0]) > dp(14)
+                    or abs(touch.y - self._press_origin[1]) > dp(14)):
+                self.release_child_touch()
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self._press_touch is touch:
+            self.release_child_touch()
+        return super().on_touch_up(touch)
 
     def on_switch_active(self, value):
+        self.release_child_touch()
+        if self._long_press_triggered:
+            self._long_press_triggered = False
+            return
+        if self.list_screen is not None and self.list_screen.selection_mode:
+            return
         value = bool(value)
         if value == self.enabled:      # programmatic sync, not a user tap
             return
@@ -1500,26 +1605,185 @@ class AlarmRow(BoxLayout):
             self.list_screen.on_toggle_alarm(self.alarm_id, value)
 
     def on_row_press(self):
-        if self.list_screen is not None:
+        self.release_child_touch()
+        if self._long_press_triggered:
+            self._long_press_triggered = False
+            return
+        if self.list_screen is None:
+            return
+        if self.list_screen.selection_mode:
+            self.list_screen.toggle_selection(self.alarm_id)
+        else:
             self.list_screen.open_edit(self.alarm_id)
 
     def on_delete_press(self):
+        self.release_child_touch()
+        if self._long_press_triggered:
+            self._long_press_triggered = False
+            return
         if self.list_screen is not None:
             self.list_screen.confirm_delete(self.alarm_id)
 
-
 class AlarmListScreen(Screen):
     _delete_popup = None
+    selection_mode = BooleanProperty(False)
+    selected_alarm_ids = ListProperty([])
+    selected_count = NumericProperty(0)
+    all_selected = BooleanProperty(False)
     exact_alarm_ok = BooleanProperty(True)
     battery_ok = BooleanProperty(True)
     overlay_ok = BooleanProperty(True)
     fsi_ok = BooleanProperty(True)
+
+    def _sync_selection_visuals(self):
+        box = self.ids.get("alarms_box") if hasattr(self, "ids") else None
+        if box is None:
+            return
+        selected = set(self.selected_alarm_ids)
+        for row in box.children:
+            if isinstance(row, AlarmRow):
+                row.selection_mode = self.selection_mode
+                row.selected = row.alarm_id in selected
+
+    def _apply_selection_state(self, alarm_ids):
+        app = App.get_running_app()
+        available = {str(item.get("id", "")) for item in app.store.all()}
+        unique = []
+        for alarm_id in alarm_ids:
+            alarm_id = str(alarm_id)
+            if alarm_id in available and alarm_id not in unique:
+                unique.append(alarm_id)
+        self.selected_alarm_ids = unique
+        self.selection_mode = bool(unique)
+        self.selected_count = len(unique)
+        self.all_selected = bool(available) and len(unique) == len(available)
+        self._sync_selection_visuals()
+
+    def begin_selection(self, alarm_id):
+        ids = list(self.selected_alarm_ids) if self.selection_mode else []
+        if str(alarm_id) not in ids:
+            ids.append(str(alarm_id))
+        self._apply_selection_state(ids)
+
+    def toggle_selection(self, alarm_id):
+        ids = list(self.selected_alarm_ids)
+        alarm_id = str(alarm_id)
+        if alarm_id in ids:
+            ids.remove(alarm_id)
+        else:
+            ids.append(alarm_id)
+        if not ids:
+            self.cancel_selection()
+        else:
+            self._apply_selection_state(ids)
+
+    def select_all_selected(self):
+        ids = [str(item.get("id", "")) for item in App.get_running_app().store.all()]
+        if not ids or self.all_selected:
+            self.cancel_selection()
+        else:
+            self._apply_selection_state(ids)
+
+    def cancel_selection(self):
+        self.selected_alarm_ids = []
+        self.selection_mode = False
+        self.selected_count = 0
+        self.all_selected = False
+        self._sync_selection_visuals()
+
+    def copy_selected(self):
+        app = App.get_running_app()
+        selected_ids = list(self.selected_alarm_ids)
+        if not selected_ids:
+            return
+        copied_count = 0
+        for alarm_id in selected_ids:
+            alarm = app.store.get(alarm_id)
+            if not alarm:
+                continue
+            duplicate = dict(alarm)
+            duplicate["id"] = new_alarm_id()
+            duplicate["days"] = list(alarm.get("days") or [False] * 7)
+            app.store.put(duplicate)
+            if duplicate.get("enabled", True):
+                app.scheduler.schedule(duplicate)
+            copied_count += 1
+        if copied_count:
+            app.refresh_next_alarm_notification()
+        self.cancel_selection()
+        self.refresh()
+
+    def confirm_delete_selected(self):
+        app = App.get_running_app()
+        selected_ids = list(self.selected_alarm_ids)
+        if not selected_ids:
+            return
+        active = getattr(self, "_delete_popup", None)
+        if active is not None and getattr(active, "is_open", False):
+            return
+
+        count = len(selected_ids)
+        content = RoundedPanel(
+            fill=(0.045, 0.045, 0.052, 1), radius=dp(22),
+            orientation="vertical", padding=(dp(18), dp(14), dp(18), dp(14)),
+            spacing=dp(8),
+        )
+        title = Label(
+            text="DELETE {} ALARM{}?".format(count, "S" if count != 1 else ""),
+            color=(1, 0.42, 0.45, 1), font_size="15sp", bold=True,
+            size_hint_y=None, height=dp(26), halign="center", valign="middle",
+        )
+        title.bind(size=lambda widget, value: setattr(widget, "text_size", value))
+        content.add_widget(title)
+        details = Label(
+            text="This removes the selected alarms and cancels their schedules.",
+            color=(0.72, 0.72, 0.76, 1), font_size="12sp",
+            size_hint_y=None, height=dp(36), halign="center", valign="middle",
+        )
+        details.bind(size=lambda widget, value: setattr(widget, "text_size", value))
+        content.add_widget(details)
+        buttons = BoxLayout(orientation="horizontal", spacing=dp(10),
+                            size_hint_y=None, height=dp(44))
+        popup = Popup(
+            title="", content=content, size_hint=(0.88, None), height=dp(190),
+            separator_height=0, background_color=(0.025, 0.025, 0.03, 1),
+            auto_dismiss=True,
+        )
+
+        def do_delete(*_):
+            for alarm_id in selected_ids:
+                alarm = app.store.get(alarm_id)
+                if alarm:
+                    app.scheduler.cancel(alarm)
+                    app.scheduler.cancel_snooze(alarm)
+                ring = app.root.get_screen("ring")
+                if ring.alarm_id == alarm_id:
+                    ring.finish(reason="delete")
+                app.store.delete(alarm_id)
+            app.refresh_next_alarm_notification()
+            popup.dismiss()
+            self.cancel_selection()
+            self.refresh()
+
+        buttons.add_widget(RoundedActionButton(
+            "CANCEL", callback=lambda: popup.dismiss(), accent=False, size_hint_x=1,
+        ))
+        buttons.add_widget(RoundedActionButton(
+            "DELETE", callback=do_delete, accent=True, size_hint_x=1,
+        ))
+        content.add_widget(buttons)
+        self._delete_popup = popup
+        popup.bind(on_dismiss=lambda *_: setattr(self, "_delete_popup", None))
+        popup.open()
 
     def on_pre_enter(self, *args):
         self.refresh()
         self._refresh_permission_banners()
 
     def go_home(self):
+        if self.selection_mode:
+            self.cancel_selection()
+            return
         App.get_running_app().root.current = "home"
 
     def _refresh_permission_banners(self):
@@ -1552,6 +1816,12 @@ class AlarmListScreen(Screen):
         box.clear_widgets()
 
         alarms = app.store.all()
+        valid_ids = {str(item.get("id", "")) for item in alarms}
+        self.selected_alarm_ids = [item_id for item_id in self.selected_alarm_ids if item_id in valid_ids]
+        if not self.selected_alarm_ids:
+            self.selection_mode = False
+        self.selected_count = len(self.selected_alarm_ids)
+        self.all_selected = bool(alarms) and self.selected_count == len(alarms)
         if not alarms:
             box.add_widget(Label(
                 text="No alarms yet.\nTap + to add one.",
@@ -1567,8 +1837,10 @@ class AlarmListScreen(Screen):
             row.time_text = format_time(alarm["hour"], alarm["minute"])
             label = alarm.get("label") or ""
             days_str = format_days(alarm.get("days"))
-            row.sub_text = (label + " · " + days_str) if label else days_str
+            row.sub_text = label if label else days_str
             row.enabled = bool(alarm.get("enabled", True))
+            row.selection_mode = self.selection_mode
+            row.selected = row.alarm_id in self.selected_alarm_ids
             box.add_widget(row)
 
     def open_permission_settings(self):
@@ -1826,7 +2098,7 @@ class AlarmEditScreen(Screen):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.time_state = {"hour": 7, "minute": 16, "ampm": "AM", "label": "Alarm"}
+        self.time_state = {"hour": 7, "minute": 16, "ampm": "AM", "label": ""}
         self._return_screen = "home"
         # PATCH2_NAV_UI_FIX_V1: an alarm is only a candidate until confirmation DONE.
         self._pending_confirmation_alarm = None
@@ -1887,7 +2159,7 @@ class AlarmEditScreen(Screen):
                 "hour": hour12,
                 "minute": now.minute,
                 "ampm": "PM" if now.hour >= 12 else "AM",
-                "label": "Alarm",
+                "label": "",
             })
             self.days_selected = [False] * 7
             self.sound_path = ""
@@ -1902,11 +2174,14 @@ class AlarmEditScreen(Screen):
                 return
             self.editing_id = alarm_id
             hour24 = int(alarm.get("hour", 7)) % 24
+            stored_label = str(alarm.get("label") or "").strip()
+            if stored_label.lower() == "alarm":
+                stored_label = ""
             self.time_state.update({
                 "hour": hour24 % 12 or 12,
                 "minute": int(alarm.get("minute", 0)) % 60,
                 "ampm": "PM" if hour24 >= 12 else "AM",
-                "label": str(alarm.get("label") or "Alarm"),
+                "label": stored_label,
             })
             self.days_selected = list(alarm.get("days") or [False] * 7)
             if len(self.days_selected) != 7:
@@ -2266,6 +2541,10 @@ class AlarmEditScreen(Screen):
         existing_alarm = app.store.get(self.editing_id)
         self._pending_confirmation_previous = dict(existing_alarm) if existing_alarm else None
         # Work on a copy: editing must not mutate the live, previously saved alarm.
+        label_text = str(self.label_input.text or self.time_state.get("label") or "").strip()
+        if len(label_text.split()) > 25:
+            return self._fail("Alarm label can contain up to 25 words.")
+
         alarm = dict(existing_alarm or {})
         sound_path = self.sound_path or app.default_ringtone_path
         sound_name = self.sound_name if self.sound_path else "Default beep"
@@ -2274,7 +2553,7 @@ class AlarmEditScreen(Screen):
             "hour": hour24,
             "minute": minute,
             "days": list(self.days_selected),
-            "label": str(self.time_state.get("label") or self.label_input.text or "Alarm").strip() or "Alarm",
+            "label": label_text or "Alarm",
             "sound_path": sound_path,
             "sound_name": sound_name,
             "volume": volume,

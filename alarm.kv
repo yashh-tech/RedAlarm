@@ -158,6 +158,19 @@
             pos: self.pos
             size: self.size
             radius: [dp(16)]
+        Color:
+            rgba: COL_RED if root.selected else (0, 0, 0, 0)
+        Line:
+            rounded_rectangle: (self.x, self.y, self.width, self.height, dp(16))
+            width: dp(1.0)
+
+    AlarmSelectionIndicator:
+        row: root
+        selected: root.selected
+        size_hint_x: None
+        width: dp(25) if root.selection_mode else 0
+        opacity: 1 if root.selection_mode else 0
+        disabled: not root.selection_mode
 
     AlarmInfoButton:
         row: root
@@ -165,29 +178,11 @@
         sub_text: root.sub_text
         dim: not root.enabled
 
-    Button:
-        text: "×"
-        size_hint: None, None
-        size: "42dp", "42dp"
-        pos_hint: {"center_y": 0.5}
-        background_normal: ""
-        background_down: ""
-        background_color: 0, 0, 0, 0
-        color: (1, 0.48, 0.50, 1)
-        font_size: "23sp"
-        bold: True
-        canvas.before:
-            Color:
-                rgba: (0.25, 0.045, 0.055, 1) if self.state == "normal" else (0.42, 0.07, 0.085, 1)
-            RoundedRectangle:
-                pos: self.pos
-                size: self.size
-                radius: [dp(12)]
-        on_release: root.on_delete_press()
-
     IOSToggle:
+        row: root
         active: root.enabled
         pos_hint: {"center_y": 0.5}
+        disabled: root.selection_mode
         on_active: root.on_switch_active(self.active)
 
 
@@ -298,6 +293,53 @@
                 size_hint_y: None
                 height: self.minimum_height
                 spacing: "12dp"
+
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: dp(62) if root.selection_mode else 0
+            opacity: 1 if root.selection_mode else 0
+            disabled: not root.selection_mode
+            spacing: dp(10)
+            padding: 0, dp(6), 0, 0
+            canvas.before:
+                Color:
+                    rgba: (0.045, 0.045, 0.05, 1) if root.selection_mode else (0, 0, 0, 0)
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+                Color:
+                    rgba: (0.20, 0.20, 0.22, 1)
+                Line:
+                    points: self.x, self.top, self.right, self.top
+                    width: dp(0.8)
+
+            HomeButton:
+                text: "Deselect All" if root.all_selected else "Select All"
+                font_size: "12sp"
+                size_hint_y: None
+                height: dp(48)
+                bg_color: (0.11, 0.11, 0.12, 1)
+                text_color: COL_TEXT
+                on_release: root.select_all_selected()
+
+            HomeButton:
+                text: "Copy"
+                font_size: "12sp"
+                size_hint_y: None
+                height: dp(48)
+                bg_color: (0.11, 0.11, 0.12, 1)
+                text_color: COL_TEXT
+                on_release: root.copy_selected()
+
+            HomeButton:
+                text: "Delete"
+                font_size: "12sp"
+                size_hint_y: None
+                height: dp(48)
+                bg_color: COL_RED
+                text_color: 1, 1, 1, 1
+                on_release: root.confirm_delete_selected()
 
 
 # --------------------------------------------------------------------

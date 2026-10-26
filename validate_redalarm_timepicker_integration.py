@@ -174,6 +174,16 @@ def main() -> int:
         fail("KV screen definitions are incomplete")
     if "TimePickerPopup" in main_text:
         fail("Orphaned legacy TimePickerPopup reference remains")
+    if "class AlarmSelectionIndicator(ButtonBehavior, Widget):" not in main_text:
+        fail("Alarm-list selection checkbox widget is missing")
+    for marker in ("def begin_selection(", "def toggle_selection(", "def select_all_selected(", "def copy_selected(", "def confirm_delete_selected("):
+        if marker not in main_text:
+            fail("Alarm-list multi-select action is missing: " + marker)
+    if any(marker not in kv_text for marker in ("AlarmSelectionIndicator:", 'text: "Copy"', "root.copy_selected()", "root.confirm_delete_selected()")):
+        fail("Alarm-list long-press toolbar wiring is incomplete")
+    if "MAX_WORDS = 25" not in module_text or "Enter label (optional)" not in module_text:
+        fail("Editable, 25-word alarm-label input is missing")
+    print("PASS: long-press multi-select, select-all/copy/delete toolbar, and label input word cap")
     print("PASS: active screen boundaries and obsolete picker handlers")
     print("ALL STATIC REGRESSION CHECKS PASSED; device tests are still required.")
     return 0

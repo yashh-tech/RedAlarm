@@ -749,7 +749,33 @@ class RoundedActionButton(Button):
 
 
 class AlarmLabelInput(TextInput):
-    """Text input that reliably receives pointer focus in the custom picker UI."""
+    """Readable label input with a hard 25-word limit and reliable touch focus."""
+    MAX_WORDS = 25
+
+    def insert_text(self, substring, from_undo=False):
+        if from_undo:
+            return super().insert_text(substring, from_undo=from_undo)
+        substring = str(substring).replace("\n", " ").replace("\r", " ")
+        try:
+            if self.selection_text:
+                start = min(int(self.selection_from), int(self.selection_to))
+                end = max(int(self.selection_from), int(self.selection_to))
+            else:
+                start = end = int(self.cursor_index())
+            prefix, suffix = self.text[:start], self.text[end:]
+            candidate = prefix + substring + suffix
+            if len(candidate.split()) > self.MAX_WORDS:
+                while substring and len((prefix + substring + suffix).split()) > self.MAX_WORDS:
+                    substring = substring[:-1]
+                if not substring:
+                    return
+                if len((prefix + substring + suffix).split()) > self.MAX_WORDS:
+                    return
+        except (AttributeError, TypeError, ValueError):
+            if len((self.text + substring).split()) > self.MAX_WORDS:
+                return
+        return super().insert_text(substring, from_undo=from_undo)
+
     def on_touch_down(self, touch):
         inside = self.collide_point(*touch.pos)
         handled = super().on_touch_down(touch)
@@ -803,20 +829,20 @@ class TimePickerPage(AnchorLayout):
         # Editable label for this alarm (e.g. Wake up, Office, Gym). It lives in
         # the shared state so it survives page transitions and appears in summary.
         label_block = BoxLayout(
-            orientation="vertical", size_hint_y=None, height=dp(52), spacing=dp(3)
+            orientation="vertical", size_hint_y=None, height=dp(56), spacing=dp(3)
         )
         label_block.add_widget(self._label("ALARM LABEL", 12.0, SUB, height=17, bold=True))
         self.label_input = AlarmLabelInput(
             # This is actual saved text (also shown when the alarm rings), not a ghost hint.
-            text=self.state.get("label") or "Alarm",
-            hint_text="",
+            text=str(self.state.get("label") or ""),
+            hint_text="Enter label (optional)",
             multiline=False, write_tab=False,
             background_normal="", background_active="",
             background_color=(0, 0, 0, 0),
             foreground_color=TEXT, hint_text_color=(0.43, 0.43, 0.47, 1),
             cursor_color=RED, selection_color=(RED[0], RED[1], RED[2], 0.45),
-            font_size=sp(14.5), padding=(dp(12), dp(7)),
-            size_hint_y=None, height=dp(33),
+            font_size=sp(15), padding=(dp(12), dp(7)),
+            size_hint_y=None, height=dp(36),
         )
         add_rounded_background(
             self.label_input, (0.065, 0.065, 0.075, 1), radius=13,
@@ -896,7 +922,7 @@ class TimePickerPage(AnchorLayout):
         self.state["hour"] = int(hour)
         self.state["minute"] = int(minute)
         self.state["ampm"] = str(ampm).upper()
-        self.state["label"] = str(label or "Alarm")
+        self.state["label"] = str(label or "")
         self.label_input.text = self.state["label"]
         self.hour_wheel.set_value(self.state["hour"])
         self.minute_wheel.set_value(self.state["minute"])
@@ -1393,18 +1419,18 @@ class AlarmAppSettingsPage(BoxLayout):
         self._sync_wheel_layout()
 
         label_block = BoxLayout(
-            orientation="vertical", size_hint_y=None, height=dp(52), spacing=dp(3)
+            orientation="vertical", size_hint_y=None, height=dp(56), spacing=dp(3)
         )
         label_block.add_widget(self._label("ALARM LABEL", 10.5, SUB, True, dp(16)))
         self.label_input = AlarmLabelInput(
-            text=str(self.editor.time_state.get("label") or "Alarm"),
-            hint_text="Alarm name", multiline=False, write_tab=False,
+            text=str(self.editor.time_state.get("label") or ""),
+            hint_text="Enter label (optional)", multiline=False, write_tab=False,
             background_normal="", background_active="",
             background_color=(0, 0, 0, 0), foreground_color=TEXT,
             hint_text_color=(0.43, 0.43, 0.47, 1), cursor_color=RED,
             selection_color=(RED[0], RED[1], RED[2], 0.45),
-            font_size=sp(13.5), padding=(dp(12), dp(6)),
-            size_hint_y=None, height=dp(33),
+            font_size=sp(15), padding=(dp(12), dp(7)),
+            size_hint_y=None, height=dp(36),
         )
         add_rounded_background(
             self.label_input, (0.065, 0.065, 0.075, 1), radius=13,
@@ -1564,13 +1590,19 @@ class AlarmAppSettingsPage(BoxLayout):
     def _label_changed(self, _widget, value):
         self.editor.time_state["label"] = value
 
+    def on_touch_down(self, touch):
+        label_input = getattr(self, "label_input", None)
+        if label_input is not None and label_input.collide_point(*touch.pos):
+            return label_input.on_touch_down(touch)
+        return super().on_touch_down(touch)
+
     def set_values(self, hour, minute, ampm, label=""):
         """Compatibility API used by AlarmEditScreen.load_alarm()."""
         self.editor.time_state.update({
             "hour": int(hour),
             "minute": int(minute) % 60,
             "ampm": "PM" if str(ampm).upper() == "PM" else "AM",
-            "label": str(label or "Alarm"),
+            "label": str(label or ""),
         })
         self.editor.ampm = self.editor.time_state["ampm"]
         self.label_input.text = self.editor.time_state["label"]
@@ -1585,7 +1617,7 @@ class AlarmAppSettingsPage(BoxLayout):
         ):
             if getattr(wheel, "_active_value", None) != value:
                 wheel.set_value(value)
-        label = str(state.get("label") or "Alarm")
+        label = str(state.get("label") or "")
         if not self.label_input.focus and self.label_input.text != label:
             self.label_input.text = label
 
