@@ -2229,7 +2229,6 @@ class AlarmEditScreen(Screen):
             )
             if ANDROID:
                 Clock.schedule_once(lambda _dt: android_show_toast(message), 0.12)
-                Clock.schedule_once(lambda _dt: android_close_alarm_task(), 0.45)
 
         content.add_widget(RoundedActionButton("DONE", callback=finish, accent=True,
                                                size_hint_y=None, height=dp(44)))
