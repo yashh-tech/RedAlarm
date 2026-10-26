@@ -115,21 +115,22 @@ def main() -> int:
     if "_commit_pending_confirmation()" not in main_text or "self._show_alarm_confirmation(alarm, trigger_dt)" not in main_text:
         fail("Alarm review/commit wiring is missing")
     if "def cancel_confirmation(self, popup=None):" not in main_text:
-        fail("Unified confirmation cancellation handler missing")
-    if 'RoundedActionButton("CANCEL", callback=cancel_review' not in main_text:
-        fail("Confirmation popup CANCEL button is missing")
-    if main_text.index('RoundedActionButton("DONE", callback=finish') > main_text.index('RoundedActionButton("CANCEL", callback=cancel_review'):
-        fail("Confirmation CANCEL must appear directly below DONE")
+        fail("Confirmation Back/outside-tap dismissal handler missing")
+
     methods = class_methods(main_text)
     confirm = methods.get(("AlarmEditScreen", "_show_alarm_confirmation"))
     if confirm is None:
         fail("AlarmEditScreen confirmation method missing")
+
     confirm_text = source_for_node(main_text, confirm)
-    cancel_start = confirm_text.find("def cancel_review")
-    cancel_text = confirm_text[cancel_start:] if cancel_start >= 0 else ""
-    if "_commit_pending_confirmation" in cancel_text:
-        fail("CANCEL must never call the alarm commit/schedule path")
-    print("PASS: confirmation commits on DONE; CANCEL/Back share the no-save path")
+
+    if 'RoundedActionButton("CANCEL", callback=cancel_review' in confirm_text:
+        fail("Confirmation popup CANCEL button should be removed")
+
+    if 'RoundedActionButton("DONE", callback=finish' not in confirm_text:
+        fail("Confirmation DONE button is missing")
+
+    print("PASS: DONE button present; CANCEL button removed; Back dismissal handler retained")
 
     if "def _seconds_to_next_wall_second():" not in main_text:
         fail("Wall-second alignment helper missing")
