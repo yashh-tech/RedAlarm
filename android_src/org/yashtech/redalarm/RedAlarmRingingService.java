@@ -87,7 +87,7 @@ public final class RedAlarmRingingService extends Service {
         String time = String.format(java.util.Locale.getDefault(), "%d:%02d %s",
                 (hour % 12 == 0 ? 12 : hour % 12), minute, hour >= 12 ? "PM" : "AM");
         String nonce = "native_" + System.currentTimeMillis();
-        Intent open = new Intent(this, org.kivy.android.PythonActivity.class);
+        Intent open = new Intent(this, RedAlarmRingActivity.class);
         open.setAction("org.yashtech.redalarm.NATIVE_FIRE." + id);
         open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         open.putExtra("alarm_id", id);
@@ -114,14 +114,13 @@ public final class RedAlarmRingingService extends Service {
     }
 
     private PendingIntent actionPendingIntent(String id, String kind) {
-        Intent i = new Intent(this, org.kivy.android.PythonActivity.class);
-        i.setAction("org.yashtech.redalarm.ACTION." + kind.toUpperCase() + "." + id);
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        i.putExtra("alarm_id", id);
-        i.putExtra("action_kind", kind);
-        i.putExtra("fire_token", kind + "_" + System.currentTimeMillis());
-        return PendingIntent.getActivity(this, RedAlarmNativeBridge.requestCode(id, "notif_" + kind), i,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Intent intent = new Intent(this, RedAlarmAlarmReceiver.class);
+        intent.setAction("org.yashtech.redalarm.RING_ACTION");
+        intent.putExtra("alarm_id", id);
+        intent.putExtra("ring_action", kind);
+        return PendingIntent.getBroadcast(this,
+                RedAlarmNativeBridge.requestCode(id, "service_notif_" + kind),
+                intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
     private void acquireWakeLock(int seconds) {
@@ -189,11 +188,20 @@ public final class RedAlarmRingingService extends Service {
         wakeLock = null;
     }
 
+    private void notifyRingFinished() {
+        if (TextUtils.isEmpty(alarmId)) return;
+        Intent finished = new Intent(RedAlarmRingActivity.ACTION_RING_FINISHED);
+        finished.setPackage(getPackageName());
+        finished.putExtra("alarm_id", alarmId);
+        sendBroadcast(finished);
+    }
+
     private void stopAndFinish() {
         handler.removeCallbacks(timeout);
         stopCurrentPlayback();
         getSharedPreferences("redalarm_native_alarms_v1", MODE_PRIVATE).edit()
                 .putBoolean("ringing:" + alarmId, false).remove("ringing_id").apply();
+        notifyRingFinished();
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.cancel(NOTIFICATION_ID);
         try { stopForeground(true); } catch (Throwable ignored) { }

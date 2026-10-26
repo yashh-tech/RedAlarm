@@ -204,25 +204,29 @@
         padding: "20dp", "44dp", "20dp", "20dp"
         spacing: "14dp"
 
-        BoxLayout:
+        FloatLayout:
             size_hint_y: None
-            height: "48dp"
+            height: dp(56)
 
             HomeButton:
-                text: "←  BACK"
-                font_size: "12sp"
+                text: "BACK"
+                font_size: "13sp"
                 size_hint: None, None
-                size: "96dp", "42dp"
+                size: dp(82), dp(48)
+                pos_hint: {"x": 0, "center_y": 0.5}
                 bg_color: 0.085, 0.075, 0.075, 1
                 text_color: COL_TEXT
                 on_release: root.go_home()
 
             Label:
                 text: "Alarms"
-                font_size: "30sp"
+                font_size: "27sp"
                 bold: True
                 color: COL_TEXT
-                halign: "left"
+                size_hint: None, None
+                size: dp(170), dp(48)
+                pos_hint: {"center_x": 0.5, "center_y": 0.5}
+                halign: "center"
                 valign: "middle"
                 text_size: self.size
 
@@ -230,7 +234,8 @@
                 text: "+"
                 font_size: "24sp"
                 size_hint: None, None
-                size: "48dp", "48dp"
+                size: dp(48), dp(48)
+                pos_hint: {"right": 1, "center_y": 0.5}
                 bg_color: COL_RED
                 text_color: 1, 1, 1, 1
                 on_release: root.open_new_alarm()

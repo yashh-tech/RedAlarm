@@ -14,6 +14,13 @@ public final class RedAlarmAlarmReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent intent) {
         if (context == null || intent == null) return;
         String id = intent.getStringExtra("alarm_id");
+        String ringAction = intent.getStringExtra("ring_action");
+        if (!TextUtils.isEmpty(ringAction)) {
+            if ("dismiss".equals(ringAction) || "snooze".equals(ringAction)) {
+                RedAlarmNativeBridge.performRingAction(context, id, ringAction);
+            }
+            return;
+        }
         String kind = intent.getStringExtra("alarm_kind");
         if (TextUtils.isEmpty(id)) return;
         boolean snooze = "snooze".equals(kind);
@@ -42,6 +49,7 @@ public final class RedAlarmAlarmReceiver extends BroadcastReceiver {
         }
         p.edit().putBoolean("ringing:" + id, true).putString("ringing_id", id)
                 .putLong("last_fire:" + id, System.currentTimeMillis()).apply();
+        RedAlarmNativeBridge.closeNormalAppTasks(context);
         Intent service = new Intent(context, RedAlarmRingingService.class);
         service.setAction(RedAlarmRingingService.ACTION_RING);
         service.putExtra("alarm_id", id);

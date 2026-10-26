@@ -1,10 +1,12 @@
 package org.yashtech.redalarm;
 
+import android.app.ActivityManager;
 import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -149,6 +151,62 @@ public final class RedAlarmNativeBridge {
         NotificationManager nm = (NotificationManager) app.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.cancel(RING_ID);
         updateNextAlarmNotification(app);
+    }
+
+
+    /** Handle ring controls without starting the Kivy/Python activity. */
+    public static void performRingAction(Context context, String alarmId, String kind) {
+        if (context == null || TextUtils.isEmpty(alarmId) || TextUtils.isEmpty(kind)) return;
+        Context app = context.getApplicationContext();
+        String current = prefs(app).getString("ringing_id", "");
+        if (!alarmId.equals(current)) return;
+
+        if ("snooze".equals(kind)) {
+            String raw = getConfig(app, alarmId);
+            if (!TextUtils.isEmpty(raw)) {
+                try {
+                    JSONObject config = new JSONObject(raw);
+                    int seconds = Math.max(1, Math.min(10800, config.optInt("snooze_sec", 60)));
+                    scheduleAlarm(app, alarmId, raw, getStorePath(app),
+                            System.currentTimeMillis() + seconds * 1000L, true);
+                } catch (JSONException e) {
+                    android.util.Log.e("RedAlarmNative", "Snooze configuration invalid", e);
+                }
+            }
+        } else if ("dismiss".equals(kind)) {
+            cancelAlarm(app, alarmId, true);
+        } else {
+            return;
+        }
+
+        stopRinging(app, alarmId);
+        Intent finished = new Intent(RedAlarmRingActivity.ACTION_RING_FINISHED);
+        finished.setPackage(app.getPackageName());
+        finished.putExtra("alarm_id", alarmId);
+        app.sendBroadcast(finished);
+    }
+
+    /** Remove the normal app task before displaying the independent ring task. */
+    public static void closeNormalAppTasks(Context context) {
+        if (context == null) return;
+        try {
+            ActivityManager manager = (ActivityManager) context.getApplicationContext()
+                    .getSystemService(Context.ACTIVITY_SERVICE);
+            if (manager == null) return;
+            for (ActivityManager.AppTask task : manager.getAppTasks()) {
+                try {
+                    Intent base = task.getTaskInfo().baseIntent;
+                    ComponentName component = base == null ? null : base.getComponent();
+                    if (component == null) continue;
+                    if (RedAlarmRingActivity.class.getName().equals(component.getClassName())) continue;
+                    task.finishAndRemoveTask();
+                } catch (Throwable e) {
+                    android.util.Log.w("RedAlarmNative", "Could not remove normal app task", e);
+                }
+            }
+        } catch (Throwable e) {
+            android.util.Log.w("RedAlarmNative", "App-task cleanup unavailable", e);
+        }
     }
 
     static String getConfig(Context context, String alarmId) {

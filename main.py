@@ -396,8 +396,8 @@ if ANDROID:
             print("[RedAlarm] lockscreen flags error:", exc)
 
     def android_show_over_lockscreen(show):
-        """Enable lock-screen visibility only for an actively ringing alarm."""
-        _apply_lockscreen_flags(show)
+        """Lockscreen visibility is exclusively owned by RedAlarmRingActivity."""
+        _apply_lockscreen_flags(False)
 
     def android_copy_content_uri_to_file(uri_string, dest_path):
         """Ringtone picks come back as content:// URIs; Kivy's audio
@@ -518,22 +518,16 @@ if ANDROID:
             manager.createNotificationChannel(channel)
 
     def _notification_action_pending_intent(alarm_id, kind):
-        """kind is 'dismiss' or 'snooze' — tapping the action re-delivers to
-        PythonActivity (same mechanism as a real alarm firing) with an
-        action_kind extra so RedAlarmApp routes it to the ringing screen's
-        dismiss/snooze instead of starting the alarm over again."""
-        intent = Intent(_activity().getApplicationContext(), PythonActivity)
-        intent.setAction("com.redalarm.{}_{}".format(kind.upper(), alarm_id))
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                        | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        intent.putExtra("alarm_id", JString(alarm_id))
-        intent.putExtra("action_kind", JString(kind))
-        nonce = kind + str(int(datetime.datetime.now().timestamp() * 1000))
-        intent.putExtra("fire_token", JString(nonce))
+        """Send Dismiss/Snooze directly to the native receiver, never Home/settings."""
+        context = _activity().getApplicationContext()
+        Receiver = autoclass("org.yashtech.redalarm.RedAlarmAlarmReceiver")
+        intent = Intent(context, Receiver)
+        intent.setAction(JString("org.yashtech.redalarm.RING_ACTION"))
+        intent.putExtra("alarm_id", JString(str(alarm_id)))
+        intent.putExtra("ring_action", JString(str(kind)))
         flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         request_code = stable_request_code(alarm_id, "notif_" + kind)
-        return PendingIntent.getActivity(_activity(), request_code, intent, flags)
+        return PendingIntent.getBroadcast(_activity(), request_code, intent, flags)
 
     def android_apply_notification_logo(builder):
         """Set splashimage.png as the large branded icon inside Android notifications."""
@@ -562,22 +556,26 @@ if ANDROID:
             print("[RedAlarm] notification large-icon error:", exc)
 
     def android_show_ring_notification(alarm_id, title, text):
+        """Fallback ring notification launches only the native minimal ring screen."""
         context = _activity().getApplicationContext()
         Notification = autoclass("android.app.Notification")
         AndroidR_drawable = autoclass("android.R$drawable")
-
-        tap_pending_intent = _alarm_pending_intent(
-            alarm_id, stable_request_code(alarm_id, "ring_tap"),
-            fire_token="tap" + str(int(datetime.datetime.now().timestamp() * 1000)),
+        RingActivity = autoclass("org.yashtech.redalarm.RedAlarmRingActivity")
+        tap_intent = Intent(context, RingActivity)
+        tap_intent.setAction(JString("org.yashtech.redalarm.OPEN_RING." + str(alarm_id)))
+        tap_intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        tap_intent.putExtra("alarm_id", JString(str(alarm_id)))
+        flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        tap_pending_intent = PendingIntent.getActivity(
+            _activity(), stable_request_code(alarm_id, "ring_tap"), tap_intent, flags
         )
         dismiss_pi = _notification_action_pending_intent(alarm_id, "dismiss")
         snooze_pi = _notification_action_pending_intent(alarm_id, "snooze")
-
         if BuildVersion.SDK_INT >= 26:
             builder = autoclass("android.app.Notification$Builder")(context, JString(_RING_CHANNEL_ID))
         else:
             builder = autoclass("android.app.Notification$Builder")(context)
-            builder.setPriority(2)  # Notification.PRIORITY_MAX
+            builder.setPriority(2)
         builder.setContentTitle(JString(title))
         builder.setContentText(JString(text))
         builder.setSmallIcon(AndroidR_drawable.ic_lock_idle_alarm)
@@ -588,10 +586,9 @@ if ANDROID:
         builder.setContentIntent(tap_pending_intent)
         builder.addAction(AndroidR_drawable.ic_menu_close_clear_cancel, JString("Dismiss"), dismiss_pi)
         builder.addAction(AndroidR_drawable.ic_popup_reminder, JString("Snooze"), snooze_pi)
-        builder.setOngoing(True)     # keep notification present while ringing
-        builder.setAutoCancel(False) # Dismiss removes it; tapping body does not
-        manager = cast("android.app.NotificationManager",
-                        context.getSystemService(Context.NOTIFICATION_SERVICE))
+        builder.setOngoing(True)
+        builder.setAutoCancel(False)
+        manager = cast("android.app.NotificationManager", context.getSystemService(Context.NOTIFICATION_SERVICE))
         manager.notify(_RING_NOTIF_ID, builder.build())
 
     def android_cancel_ring_notification():
@@ -2232,6 +2229,7 @@ class AlarmEditScreen(Screen):
             )
             if ANDROID:
                 Clock.schedule_once(lambda _dt: android_show_toast(message), 0.12)
+                Clock.schedule_once(lambda _dt: android_close_alarm_task(), 0.45)
 
         content.add_widget(RoundedActionButton("DONE", callback=finish, accent=True,
                                                size_hint_y=None, height=dp(44)))
