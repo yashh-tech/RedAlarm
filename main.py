@@ -1407,7 +1407,7 @@ class DigitInput(TextInput):
 
 
 class AlarmSelectionIndicator(ButtonBehavior, Widget):
-    """A compact checkbox shown only while the alarm list is in selection mode."""
+    """Always-visible checkbox for selecting an alarm without opening its editor."""
     selected = BooleanProperty(False)
     row = ObjectProperty(None)
 
@@ -1438,7 +1438,7 @@ class AlarmSelectionIndicator(ButtonBehavior, Widget):
     def on_release(self):
         if self.row is not None and self.row.list_screen is not None:
             self.row.release_child_touch()
-            self.row.on_row_press()
+            self.row.list_screen.toggle_selection(self.row.alarm_id)
 
 
 class AlarmInfoButton(ButtonBehavior, BoxLayout):
@@ -1569,7 +1569,12 @@ class AlarmRow(BoxLayout):
         if self.collide_point(*touch.pos):
             self.release_child_touch()
             self._long_press_triggered = False
-            if self.list_screen is not None and not self.list_screen.selection_mode:
+            checkbox_touched = any(
+                isinstance(child, AlarmSelectionIndicator) and child.collide_point(*touch.pos)
+                for child in self.children
+            )
+            if (self.list_screen is not None and not self.list_screen.selection_mode
+                    and not checkbox_touched):
                 self._press_touch = touch
                 self._press_origin = tuple(touch.pos)
                 self._long_press_event = Clock.schedule_once(

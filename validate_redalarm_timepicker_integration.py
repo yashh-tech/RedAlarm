@@ -183,7 +183,24 @@ def main() -> int:
         fail("Alarm-list long-press toolbar wiring is incomplete")
     if "MAX_WORDS = 25" not in module_text or "Enter label (optional)" not in module_text:
         fail("Editable, 25-word alarm-label input is missing")
-    print("PASS: long-press multi-select, select-all/copy/delete toolbar, and label input word cap")
+    indicator = main_text.split("class AlarmSelectionIndicator(ButtonBehavior, Widget):", 1)[1].split("class AlarmInfoButton", 1)[0]
+    if "toggle_selection(self.row.alarm_id)" not in indicator:
+        fail("Tapping the row checkbox must toggle selection directly")
+    row_class_text = main_text.split("class AlarmRow(BoxLayout):", 1)[1].split("class AlarmListScreen", 1)[0]
+    if "checkbox_touched" not in row_class_text:
+        fail("Tapping/holding a checkbox must not conflict with the row long-press timer")
+    if "width: dp(25) if root.selection_mode else 0" in kv_text or "opacity: 1 if root.selection_mode else 0" in kv_text:
+        fail("Alarm-row checkboxes must remain visible")
+    if 'height: dp(62) if root.selection_mode else 0' in kv_text or 'disabled: not root.selection_mode' in kv_text:
+        fail("Alarm-list bottom action bar must remain visible and enabled")
+    if 'on_release: root.on_delete_press()' not in kv_text or "def confirm_delete(self, alarm_id):" not in main_text:
+        fail("Individual alarm delete with confirmation must remain available")
+    if 'kwargs["input_type"] = "text"' not in module_text or 'kwargs["keyboard_suggestions"] = True' not in module_text:
+        fail("Label input must request a text keyboard with suggestions")
+    if 'kwargs["disabled_foreground_color"] = (1, 1, 1, 1)' not in module_text:
+        fail("Label input disabled text must remain readable")
+    print("PASS: permanent checkboxes/action bar, individual delete confirmation, and bulk actions")
+    print("PASS: readable label text, text keyboard, suggestions, and 25-word cap")
     print("PASS: active screen boundaries and obsolete picker handlers")
     print("ALL STATIC REGRESSION CHECKS PASSED; device tests are still required.")
     return 0

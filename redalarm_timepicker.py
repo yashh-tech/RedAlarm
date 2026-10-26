@@ -749,8 +749,20 @@ class RoundedActionButton(Button):
 
 
 class AlarmLabelInput(TextInput):
-    """Readable label input with a hard 25-word limit and reliable touch focus."""
+    """Readable label input with a hard 25-word limit, suggestions, and reliable touch focus."""
     MAX_WORDS = 25
+
+    def __init__(self, **kwargs):
+        # Do not let disabled-field defaults make the label look like ghost text.
+        kwargs["foreground_color"] = (1, 1, 1, 1)
+        kwargs["disabled_foreground_color"] = (1, 1, 1, 1)
+        kwargs["hint_text_color"] = (0.72, 0.72, 0.76, 1)
+        # Android only offers its normal word suggestions for a text IME.
+        kwargs["input_type"] = "text"
+        kwargs["keyboard_suggestions"] = True
+        kwargs["disabled"] = False
+        kwargs["opacity"] = 1
+        super().__init__(**kwargs)
 
     def insert_text(self, substring, from_undo=False):
         if from_undo:
@@ -841,7 +853,7 @@ class TimePickerPage(AnchorLayout):
             background_color=(0, 0, 0, 0),
             foreground_color=TEXT, hint_text_color=(0.43, 0.43, 0.47, 1),
             cursor_color=RED, selection_color=(RED[0], RED[1], RED[2], 0.45),
-            font_size=sp(15), padding=(dp(12), dp(7)),
+            font_size=sp(16), padding=(dp(12), dp(8)),
             size_hint_y=None, height=dp(36),
         )
         add_rounded_background(
@@ -1429,7 +1441,7 @@ class AlarmAppSettingsPage(BoxLayout):
             background_color=(0, 0, 0, 0), foreground_color=TEXT,
             hint_text_color=(0.43, 0.43, 0.47, 1), cursor_color=RED,
             selection_color=(RED[0], RED[1], RED[2], 0.45),
-            font_size=sp(15), padding=(dp(12), dp(7)),
+            font_size=sp(16), padding=(dp(12), dp(8)),
             size_hint_y=None, height=dp(36),
         )
         add_rounded_background(
