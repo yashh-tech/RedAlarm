@@ -145,15 +145,11 @@ class _CrashLogger(ExceptionHandler):
 # ----------------------------------------------------------------------
 # ANDROID BRIDGE — every native call lives here, nowhere else in the file.
 #
-# How this actually wakes the phone, without any background service:
-# AlarmManager.setAlarmClock() is the API Android reserves specifically for
-# user-visible alarm clocks — the OS itself wakes the CPU at the exact time
-# and directly re-launches THIS activity via a PendingIntent (no
-# BroadcastReceiver, no 24/7 service needed; this is the same mechanism the
-# stock Android Clock app uses). Once relaunched, this code acquires a
-# WAKE_LOCK and sets window flags that draw over the lock screen and turn
-# the screen on — that's what actually makes it "wake the phone" on top of
-# merely firing on time.
+# AlarmManager delivers to a native BroadcastReceiver, which starts the
+# independent RedAlarmRingingService. Audio/wake-lock handling therefore does
+# not depend on Kivy's render loop or the Activity staying alive. A boot/time
+# receiver restores scheduled alarms from native preferences; PythonActivity
+# is only the user-facing ringing screen and dismiss/snooze control surface.
 # ----------------------------------------------------------------------
 if ANDROID:
     from jnius import autoclass, cast
@@ -223,21 +219,88 @@ if ANDROID:
         flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         return PendingIntent.getActivity(_activity(), request_code, intent, flags)
 
-    def android_schedule_alarm(alarm_id, trigger_dt, salt=""):
+    def android_schedule_alarm(alarm_id, trigger_dt, salt="", alarm=None, store_path=""):
+        """Schedule through native BroadcastReceiver; Python/Kivy need not be awake."""
         request_code = stable_request_code(alarm_id, salt)
         fire_token = int(trigger_dt.timestamp() * 1000)
-        pending_intent = _alarm_pending_intent(alarm_id, request_code, fire_token)
-        info = AlarmClockInfo(fire_token, pending_intent)
-        # setAlarmClock() fires exactly on time even through Doze, and the
-        # OS shows its own little alarm-clock glyph in the status bar.
-        _alarm_manager().setAlarmClock(info, pending_intent)
+        app = App.get_running_app()
+        config = dict(alarm or {})
+        if app is not None:
+            if not store_path:
+                store_path = getattr(getattr(app, "store", None), "path", "")
+            try:
+                cache_dir = getattr(app, "ringtone_cache_dir", "")
+                resolved = resolve_ringtone_for_playback(config.get("sound_path", ""), cache_dir)
+                if resolved and os.path.isfile(resolved):
+                    config["native_sound_path"] = resolved
+            except Exception as exc:
+                print("[RedAlarm] native ringtone path preparation failed:", exc)
+            config["native_fallback_path"] = getattr(app, "default_ringtone_path", "")
+        config["id"] = str(alarm_id)
+        if not config:
+            config = {"id": str(alarm_id), "enabled": True, "hour": trigger_dt.hour,
+                      "minute": trigger_dt.minute, "days": [False] * 7}
+        try:
+            context = _activity().getApplicationContext()
+            # Clear a pre-patch Activity PendingIntent with the same identity.
+            try:
+                _alarm_manager().cancel(_alarm_pending_intent(alarm_id, request_code, fire_token))
+            except Exception:
+                pass
+            Bridge = autoclass("org.yashtech.redalarm.RedAlarmNativeBridge")
+            Bridge.scheduleAlarm(
+                context, JString(str(alarm_id)), JString(json.dumps(config, ensure_ascii=False)),
+                JString(str(store_path or "")), int(fire_token), bool(salt == "snooze")
+            )
+        except Exception as exc:
+            # Legacy fallback keeps compatibility if the native bridge could not be loaded.
+            print("[RedAlarm] native scheduler unavailable; using legacy Activity alarm:", exc)
+            pending_intent = _alarm_pending_intent(alarm_id, request_code, fire_token)
+            info = AlarmClockInfo(fire_token, pending_intent)
+            _alarm_manager().setAlarmClock(info, pending_intent)
 
     def android_cancel_alarm(alarm_id, salt=""):
         request_code = stable_request_code(alarm_id, salt)
-        # Extras don't matter for cancellation — only action/component/
-        # request-code need to match the PendingIntent being cancelled.
-        pending_intent = _alarm_pending_intent(alarm_id, request_code)
-        _alarm_manager().cancel(pending_intent)
+        try:
+            Bridge = autoclass("org.yashtech.redalarm.RedAlarmNativeBridge")
+            Bridge.cancelAlarm(_activity().getApplicationContext(), JString(str(alarm_id)), bool(salt == "snooze"))
+        except Exception as exc:
+            print("[RedAlarm] native alarm cancellation failed:", exc)
+        # Also cancel any legacy Activity-based PendingIntent left by an older APK.
+        try:
+            pending_intent = _alarm_pending_intent(alarm_id, request_code)
+            _alarm_manager().cancel(pending_intent)
+        except Exception:
+            pass
+
+    def android_native_ring_is_active(alarm_id):
+        try:
+            Bridge = autoclass("org.yashtech.redalarm.RedAlarmNativeBridge")
+            return bool(Bridge.isRinging(_activity().getApplicationContext(), JString(str(alarm_id))))
+        except Exception as exc:
+            print("[RedAlarm] native ring status unavailable:", exc)
+            return False
+
+    def android_stop_native_ring_service(alarm_id=""):
+        try:
+            Bridge = autoclass("org.yashtech.redalarm.RedAlarmNativeBridge")
+            Bridge.stopRinging(_activity().getApplicationContext(), JString(str(alarm_id or "")))
+        except Exception as exc:
+            print("[RedAlarm] native ring service stop failed:", exc)
+
+    def android_any_native_ring_active():
+        try:
+            Bridge = autoclass("org.yashtech.redalarm.RedAlarmNativeBridge")
+            return bool(Bridge.isAnyRinging(_activity().getApplicationContext()))
+        except Exception:
+            return False
+
+    def android_native_fire_recently(alarm_id):
+        try:
+            Bridge = autoclass("org.yashtech.redalarm.RedAlarmNativeBridge")
+            return bool(Bridge.hasRecentNativeFire(_activity().getApplicationContext(), JString(str(alarm_id))))
+        except Exception:
+            return False
 
     def android_can_schedule_exact_alarms():
         try:
@@ -930,7 +993,9 @@ class AlarmScheduler:
         # activity, not from this dict).
         self._pending[alarm["id"]] = (alarm["id"], trigger_dt)
         if ANDROID:
-            android_schedule_alarm(alarm["id"], trigger_dt, salt="")
+            app = App.get_running_app()
+            store_path = getattr(getattr(app, "store", None), "path", "")
+            android_schedule_alarm(alarm["id"], trigger_dt, salt="", alarm=alarm, store_path=store_path)
         return trigger_dt
 
     def cancel(self, alarm):
@@ -941,7 +1006,9 @@ class AlarmScheduler:
     def schedule_snooze(self, alarm, trigger_dt):
         self._pending[alarm["id"] + "snooze"] = (alarm["id"], trigger_dt)
         if ANDROID:
-            android_schedule_alarm(alarm["id"], trigger_dt, salt="snooze")
+            app = App.get_running_app()
+            store_path = getattr(getattr(app, "store", None), "path", "")
+            android_schedule_alarm(alarm["id"], trigger_dt, salt="snooze", alarm=alarm, store_path=store_path)
 
     def cancel_snooze(self, alarm):
         self._pending.pop(alarm["id"] + "snooze", None)
@@ -2169,15 +2236,6 @@ class AlarmEditScreen(Screen):
         content.add_widget(RoundedActionButton("DONE", callback=finish, accent=True,
                                                size_hint_y=None, height=dp(44)))
 
-        def cancel_review(_button=None):
-            # Dismiss after the release event completes; do not destroy the button mid-dispatch.
-            Clock.schedule_once(lambda _dt: self.cancel_confirmation(popup), 0)
-
-        # Cancel returns to settings and preserves the in-memory form; it does
-        # not reach the commit/scheduling path.
-        content.add_widget(RoundedActionButton("CANCEL", callback=cancel_review, accent=False,
-                                               size_hint_y=None, height=dp(44),
-                                               trigger_on_press=True))
         popup.open()
 
     def save_alarm(self):
@@ -2272,19 +2330,25 @@ class AlarmRingScreen(Screen):
         self.time_text = format_time(alarm["hour"], alarm["minute"])
         self.label_text = alarm.get("label") or "Alarm"
 
+        native_playback = False
         if ANDROID:
+            try:
+                native_playback = android_native_ring_is_active(alarm["id"])
+            except Exception:
+                native_playback = False
             try:
                 android_acquire_wake_lock()
                 android_show_over_lockscreen(True)
             except Exception as exc:
                 print("[RedAlarm] wake/lockscreen error:", exc)
-            try:
-                android_show_ring_notification(
-                    alarm["id"], self.label_text, self.time_text
-                )
-            except Exception as exc:
-                print("[RedAlarm] full-screen notification error:", exc)
-            if alarm.get("vibrate", False):
+            # The native service already posts its own full-screen notification.
+            # Do not replace it with a second Activity-owned notification.
+            if not native_playback:
+                try:
+                    android_show_ring_notification(alarm["id"], self.label_text, self.time_text)
+                except Exception as exc:
+                    print("[RedAlarm] full-screen notification error:", exc)
+            if alarm.get("vibrate", False) and not native_playback:
                 try:
                     android_vibrate_start()
                     print("[RedAlarm] ring: vibration started")
@@ -2309,12 +2373,19 @@ class AlarmRingScreen(Screen):
             ring_volume = max(0.0, min(1.0, float(alarm.get("volume", 0.80))))
         except (TypeError, ValueError):
             ring_volume = 0.80
-        sound = load_and_play(path, loop=True, volume=ring_volume) if path else None
-        if sound is None and path != app.default_ringtone_path:
-            print("[RedAlarm] ring: chosen sound failed, falling back to default beep")
-            sound = load_and_play(app.default_ringtone_path, loop=True, volume=ring_volume)
+        # On Android the exact-alarm receiver starts a native media-playback
+        # foreground service before it asks the Activity to draw this screen.
+        # That service keeps audio alive if Kivy's clock pauses on the lock screen.
+        if ANDROID and native_playback:
+            sound = None
+            print("[RedAlarm] ring: native foreground service owns playback")
+        else:
+            sound = load_and_play(path, loop=True, volume=ring_volume) if path else None
+            if sound is None and path != app.default_ringtone_path:
+                print("[RedAlarm] ring: chosen sound failed, falling back to default beep")
+                sound = load_and_play(app.default_ringtone_path, loop=True, volume=ring_volume)
         self._sound = sound
-        if sound is None:
+        if sound is None and not (ANDROID and native_playback):
             print("[RedAlarm] ring: NO sound could be started (not even the default)")
 
         configured_dismiss_seconds = max(
@@ -2391,20 +2462,30 @@ class AlarmRingScreen(Screen):
         self._stop_ring_sound()
 
         if ANDROID:
+            # Stop only the native service owned by this RingScreen. On a new
+            # alarm launch, an older screen's cleanup must not kill the fresh
+            # service or remove its notification/vibration.
             try:
-                android_show_over_lockscreen(False)
-                android_release_wake_lock()
+                if self.alarm_id:
+                    android_stop_native_ring_service(self.alarm_id)
             except Exception as exc:
-                print("[RedAlarm] wake/lockscreen release error:", exc)
-            try:
-                android_vibrate_stop()
-            except Exception as exc:
-                print("[RedAlarm] vibration stop error:", exc)
-            if cancel_notification:
+                print("[RedAlarm] native ringing service stop error:", exc)
+            native_still_ringing = android_any_native_ring_active()
+            if not native_still_ringing:
                 try:
-                    android_cancel_ring_notification()
+                    android_show_over_lockscreen(False)
+                    android_release_wake_lock()
                 except Exception as exc:
-                    print("[RedAlarm] full-screen notification cancel error:", exc)
+                    print("[RedAlarm] wake/lockscreen release error:", exc)
+                try:
+                    android_vibrate_stop()
+                except Exception as exc:
+                    print("[RedAlarm] vibration stop error:", exc)
+                if cancel_notification:
+                    try:
+                        android_cancel_ring_notification()
+                    except Exception as exc:
+                        print("[RedAlarm] full-screen notification cancel error:", exc)
 
     def dismiss_pressed(self):
         if self._ringing:
@@ -2831,6 +2912,8 @@ class RedAlarmApp(App):
             if ring.alarm_id == alarm_id and ring._ringing:
                 ring.dismiss_pressed()
             else:
+                if ANDROID:
+                    android_stop_native_ring_service(alarm_id)
                 # Handle notification actions even if Android recreated the process.
                 alarm = self.store.get(alarm_id)
                 if alarm:
@@ -2858,6 +2941,7 @@ class RedAlarmApp(App):
                     self.scheduler.schedule_snooze(alarm, next_trigger)
                     ring._keep_snooze_notification = True
                     if ANDROID:
+                        android_stop_native_ring_service(alarm_id)
                         android_show_snoozed_notification(alarm_id, next_trigger)
                         Clock.schedule_once(lambda _dt: android_close_alarm_task(), 0.20)
             return
@@ -2872,7 +2956,35 @@ class RedAlarmApp(App):
 
     def handle_alarm_fired(self, alarm_id):
         alarm = self.store.get(alarm_id)
-        if not alarm or not alarm.get("enabled", True):
+        native_ring_active = False
+        if ANDROID and alarm:
+            try:
+                native_ring_active = android_native_ring_is_active(alarm_id)
+            except Exception:
+                native_ring_active = False
+        if not alarm:
+            return
+        if ANDROID and not native_ring_active:
+            try:
+                if android_native_fire_recently(alarm_id):
+                    # The native service already rang and auto-dismissed while
+                    # Kivy was asleep. Do not replay late on unlock. Reconcile
+                    # the in-memory store with native one-shot completion.
+                    if any(alarm.get("days") or []) and alarm.get("enabled", True):
+                        self.scheduler.schedule(
+                            alarm, now=datetime.datetime.now() + datetime.timedelta(seconds=30)
+                        )
+                    else:
+                        if not any(alarm.get("days") or []):
+                            alarm["enabled"] = False
+                            self.store.put(alarm)
+                        self.scheduler.cancel(alarm)
+                        self.scheduler.cancel_snooze(alarm)
+                    self._refresh_next_alarm_notification()
+                    return
+            except Exception as exc:
+                print("[RedAlarm] could not reconcile delayed native alarm:", exc)
+        if not alarm.get("enabled", True) and not native_ring_active:
             return
 
         # Repeating alarms: queue the next occurrence right away. Looking
@@ -2890,11 +3002,15 @@ class RedAlarmApp(App):
         self._refresh_next_alarm_notification()
 
     def on_stop(self):
-        if self._ready:
-            ring = self.root.get_screen("ring")
-            ring._stop_common(
-                cancel_notification=not ring._keep_snooze_notification
-            )
+        if not self._ready:
+            return
+        if ANDROID:
+            # Android may call this when the Activity is backgrounded/locked or
+            # the UI process is reclaimed. Native AlarmManager + foreground
+            # ringing service own delivery and playback; never cancel them here.
+            return
+        ring = self.root.get_screen("ring")
+        ring._stop_common(cancel_notification=not ring._keep_snooze_notification)
 
 
 if __name__ == "__main__":
