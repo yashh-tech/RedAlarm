@@ -19,6 +19,7 @@ def after_apk_build(toolchain):
     # then insert one canonical copy. This also repairs old manifests when p4a
     # reuses a build distribution.
     owned = [
+        ("activity", "org.yashtech.redalarm.RedAlarmRingActivity"),
         ("receiver", "org.kivy.android.KivyAlarmReceiver"),
         ("receiver", "org.yashtech.redalarm.RedAlarmAlarmReceiver"),
         ("service", "org.yashtech.redalarm.RedAlarmRingingService"),
@@ -28,6 +29,15 @@ def after_apk_build(toolchain):
         text = pattern.sub("", text)
     app = re.search(r"<application\b[^>]*>", text, flags=re.DOTALL)
     components = """
+        <activity
+            android:name="org.yashtech.redalarm.RedAlarmRingActivity"
+            android:enabled="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="org.yashtech.redalarm.ring"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
         <receiver android:name="org.kivy.android.KivyAlarmReceiver" android:enabled="true" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

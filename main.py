@@ -145,15 +145,11 @@ class _CrashLogger(ExceptionHandler):
 # ----------------------------------------------------------------------
 # ANDROID BRIDGE — every native call lives here, nowhere else in the file.
 #
-# How this actually wakes the phone, without any background service:
-# AlarmManager.setAlarmClock() is the API Android reserves specifically for
-# user-visible alarm clocks — the OS itself wakes the CPU at the exact time
-# and directly re-launches THIS activity via a PendingIntent (no
-# BroadcastReceiver, no 24/7 service needed; this is the same mechanism the
-# stock Android Clock app uses). Once relaunched, this code acquires a
-# WAKE_LOCK and sets window flags that draw over the lock screen and turn
-# the screen on — that's what actually makes it "wake the phone" on top of
-# merely firing on time.
+# AlarmManager delivers to a native BroadcastReceiver, which starts the
+# independent RedAlarmRingingService. Audio/wake-lock handling therefore does
+# not depend on Kivy's render loop or the Activity staying alive. A boot/time
+# receiver restores scheduled alarms from native preferences; PythonActivity
+# is only the user-facing ringing screen and dismiss/snooze control surface.
 # ----------------------------------------------------------------------
 if ANDROID:
     from jnius import autoclass, cast
@@ -400,8 +396,8 @@ if ANDROID:
             print("[RedAlarm] lockscreen flags error:", exc)
 
     def android_show_over_lockscreen(show):
-        """Enable lock-screen visibility only for an actively ringing alarm."""
-        _apply_lockscreen_flags(show)
+        """Lockscreen visibility is exclusively owned by RedAlarmRingActivity."""
+        _apply_lockscreen_flags(False)
 
     def android_copy_content_uri_to_file(uri_string, dest_path):
         """Ringtone picks come back as content:// URIs; Kivy's audio
@@ -522,22 +518,16 @@ if ANDROID:
             manager.createNotificationChannel(channel)
 
     def _notification_action_pending_intent(alarm_id, kind):
-        """kind is 'dismiss' or 'snooze' — tapping the action re-delivers to
-        PythonActivity (same mechanism as a real alarm firing) with an
-        action_kind extra so RedAlarmApp routes it to the ringing screen's
-        dismiss/snooze instead of starting the alarm over again."""
-        intent = Intent(_activity().getApplicationContext(), PythonActivity)
-        intent.setAction("com.redalarm.{}_{}".format(kind.upper(), alarm_id))
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                        | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        intent.putExtra("alarm_id", JString(alarm_id))
-        intent.putExtra("action_kind", JString(kind))
-        nonce = kind + str(int(datetime.datetime.now().timestamp() * 1000))
-        intent.putExtra("fire_token", JString(nonce))
+        """Send Dismiss/Snooze directly to the native receiver, never Home/settings."""
+        context = _activity().getApplicationContext()
+        Receiver = autoclass("org.yashtech.redalarm.RedAlarmAlarmReceiver")
+        intent = Intent(context, Receiver)
+        intent.setAction(JString("org.yashtech.redalarm.RING_ACTION"))
+        intent.putExtra("alarm_id", JString(str(alarm_id)))
+        intent.putExtra("ring_action", JString(str(kind)))
         flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         request_code = stable_request_code(alarm_id, "notif_" + kind)
-        return PendingIntent.getActivity(_activity(), request_code, intent, flags)
+        return PendingIntent.getBroadcast(_activity(), request_code, intent, flags)
 
     def android_apply_notification_logo(builder):
         """Set splashimage.png as the large branded icon inside Android notifications."""
@@ -566,22 +556,26 @@ if ANDROID:
             print("[RedAlarm] notification large-icon error:", exc)
 
     def android_show_ring_notification(alarm_id, title, text):
+        """Fallback ring notification launches only the native minimal ring screen."""
         context = _activity().getApplicationContext()
         Notification = autoclass("android.app.Notification")
         AndroidR_drawable = autoclass("android.R$drawable")
-
-        tap_pending_intent = _alarm_pending_intent(
-            alarm_id, stable_request_code(alarm_id, "ring_tap"),
-            fire_token="tap" + str(int(datetime.datetime.now().timestamp() * 1000)),
+        RingActivity = autoclass("org.yashtech.redalarm.RedAlarmRingActivity")
+        tap_intent = Intent(context, RingActivity)
+        tap_intent.setAction(JString("org.yashtech.redalarm.OPEN_RING." + str(alarm_id)))
+        tap_intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        tap_intent.putExtra("alarm_id", JString(str(alarm_id)))
+        flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        tap_pending_intent = PendingIntent.getActivity(
+            _activity(), stable_request_code(alarm_id, "ring_tap"), tap_intent, flags
         )
         dismiss_pi = _notification_action_pending_intent(alarm_id, "dismiss")
         snooze_pi = _notification_action_pending_intent(alarm_id, "snooze")
-
         if BuildVersion.SDK_INT >= 26:
             builder = autoclass("android.app.Notification$Builder")(context, JString(_RING_CHANNEL_ID))
         else:
             builder = autoclass("android.app.Notification$Builder")(context)
-            builder.setPriority(2)  # Notification.PRIORITY_MAX
+            builder.setPriority(2)
         builder.setContentTitle(JString(title))
         builder.setContentText(JString(text))
         builder.setSmallIcon(AndroidR_drawable.ic_lock_idle_alarm)
@@ -592,10 +586,9 @@ if ANDROID:
         builder.setContentIntent(tap_pending_intent)
         builder.addAction(AndroidR_drawable.ic_menu_close_clear_cancel, JString("Dismiss"), dismiss_pi)
         builder.addAction(AndroidR_drawable.ic_popup_reminder, JString("Snooze"), snooze_pi)
-        builder.setOngoing(True)     # keep notification present while ringing
-        builder.setAutoCancel(False) # Dismiss removes it; tapping body does not
-        manager = cast("android.app.NotificationManager",
-                        context.getSystemService(Context.NOTIFICATION_SERVICE))
+        builder.setOngoing(True)
+        builder.setAutoCancel(False)
+        manager = cast("android.app.NotificationManager", context.getSystemService(Context.NOTIFICATION_SERVICE))
         manager.notify(_RING_NOTIF_ID, builder.build())
 
     def android_cancel_ring_notification():
@@ -1345,6 +1338,7 @@ class IOSToggle(ButtonBehavior, Widget):
     `active` BooleanProperty, so `on_active:` works in kv like a Switch."""
 
     active = BooleanProperty(False)
+    row = ObjectProperty(None)
     _thumb = NumericProperty(0)   # 0 = left/off, 1 = right/on (animated)
 
     def __init__(self, **kwargs):
@@ -1360,6 +1354,14 @@ class IOSToggle(ButtonBehavior, Widget):
         self._redraw()
 
     def on_release(self):
+        row = self.row
+        if row is not None:
+            row.release_child_touch()
+            if row._long_press_triggered:
+                row._long_press_triggered = False
+                return
+            if row.list_screen is not None and row.list_screen.selection_mode:
+                return
         self.active = not self.active
 
     def _redraw(self, *_):
@@ -1404,6 +1406,41 @@ class DigitInput(TextInput):
             Clock.schedule_once(lambda dt: self.select_all(), 0)
 
 
+class AlarmSelectionIndicator(ButtonBehavior, Widget):
+    """Always-visible checkbox for selecting an alarm without opening its editor."""
+    selected = BooleanProperty(False)
+    row = ObjectProperty(None)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(pos=self._redraw, size=self._redraw, selected=self._redraw)
+        self._redraw()
+
+    def _redraw(self, *_):
+        self.canvas.clear()
+        side = min(dp(22), self.width, self.height)
+        if side < dp(2):
+            return
+        x, y = self.center_x - side / 2.0, self.center_y - side / 2.0
+        radius = min(dp(5), side / 4.0)
+        with self.canvas:
+            if self.selected:
+                Color(rgba=(0.88, 0.12, 0.15, 1))
+                RoundedRectangle(pos=(x, y), size=(side, side), radius=[radius])
+                Color(rgba=(1, 1, 1, 1))
+                Line(points=[x + side * 0.22, y + side * 0.53,
+                             x + side * 0.43, y + side * 0.31,
+                             x + side * 0.79, y + side * 0.72], width=dp(1.8), cap="round")
+            else:
+                Color(rgba=(0.34, 0.34, 0.36, 1))
+                Line(rounded_rectangle=(x, y, side, side, radius), width=dp(1.35))
+
+    def on_release(self):
+        if self.row is not None and self.row.list_screen is not None:
+            self.row.release_child_touch()
+            self.row.list_screen.toggle_selection(self.row.alarm_id)
+
+
 class AlarmInfoButton(ButtonBehavior, BoxLayout):
     """The tappable time/label area of a row (opens the edit screen).
     Gets its own text properties (bound from AlarmRow in alarm.kv) instead
@@ -1415,6 +1452,7 @@ class AlarmInfoButton(ButtonBehavior, BoxLayout):
 
     def on_release(self):
         if self.row is not None:
+            self.row.release_child_touch()
             self.row.on_row_press()
 
 
@@ -1497,8 +1535,73 @@ class AlarmRow(BoxLayout):
     sub_text = StringProperty("")
     enabled = BooleanProperty(True)
     list_screen = ObjectProperty(None)
+    selection_mode = BooleanProperty(False)
+    selected = BooleanProperty(False)
+    LONG_PRESS_SECONDS = 0.55
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._long_press_event = None
+        self._press_touch = None
+        self._press_origin = None
+        self._long_press_triggered = False
+
+    def release_child_touch(self):
+        event, self._long_press_event = self._long_press_event, None
+        if event is not None:
+            try:
+                event.cancel()
+            except Exception:
+                pass
+        self._press_touch = None
+        self._press_origin = None
+
+    def _fire_long_press(self, touch):
+        self._long_press_event = None
+        if self._press_touch is not touch or self.list_screen is None:
+            return
+        if not self.collide_point(*touch.pos) or self.list_screen.selection_mode:
+            return
+        self._long_press_triggered = True
+        self.list_screen.begin_selection(self.alarm_id)
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            self.release_child_touch()
+            self._long_press_triggered = False
+            checkbox_touched = any(
+                isinstance(child, AlarmSelectionIndicator) and child.collide_point(*touch.pos)
+                for child in self.children
+            )
+            if (self.list_screen is not None and not self.list_screen.selection_mode
+                    and not checkbox_touched):
+                self._press_touch = touch
+                self._press_origin = tuple(touch.pos)
+                self._long_press_event = Clock.schedule_once(
+                    lambda _dt, held=touch: self._fire_long_press(held),
+                    self.LONG_PRESS_SECONDS,
+                )
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if self._press_touch is touch and not self._long_press_triggered and self._press_origin:
+            if (abs(touch.x - self._press_origin[0]) > dp(14)
+                    or abs(touch.y - self._press_origin[1]) > dp(14)):
+                self.release_child_touch()
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self._press_touch is touch:
+            self.release_child_touch()
+        return super().on_touch_up(touch)
 
     def on_switch_active(self, value):
+        self.release_child_touch()
+        if self._long_press_triggered:
+            self._long_press_triggered = False
+            return
+        if self.list_screen is not None and self.list_screen.selection_mode:
+            return
         value = bool(value)
         if value == self.enabled:      # programmatic sync, not a user tap
             return
@@ -1507,26 +1610,185 @@ class AlarmRow(BoxLayout):
             self.list_screen.on_toggle_alarm(self.alarm_id, value)
 
     def on_row_press(self):
-        if self.list_screen is not None:
+        self.release_child_touch()
+        if self._long_press_triggered:
+            self._long_press_triggered = False
+            return
+        if self.list_screen is None:
+            return
+        if self.list_screen.selection_mode:
+            self.list_screen.toggle_selection(self.alarm_id)
+        else:
             self.list_screen.open_edit(self.alarm_id)
 
     def on_delete_press(self):
+        self.release_child_touch()
+        if self._long_press_triggered:
+            self._long_press_triggered = False
+            return
         if self.list_screen is not None:
             self.list_screen.confirm_delete(self.alarm_id)
 
-
 class AlarmListScreen(Screen):
     _delete_popup = None
+    selection_mode = BooleanProperty(False)
+    selected_alarm_ids = ListProperty([])
+    selected_count = NumericProperty(0)
+    all_selected = BooleanProperty(False)
     exact_alarm_ok = BooleanProperty(True)
     battery_ok = BooleanProperty(True)
     overlay_ok = BooleanProperty(True)
     fsi_ok = BooleanProperty(True)
+
+    def _sync_selection_visuals(self):
+        box = self.ids.get("alarms_box") if hasattr(self, "ids") else None
+        if box is None:
+            return
+        selected = set(self.selected_alarm_ids)
+        for row in box.children:
+            if isinstance(row, AlarmRow):
+                row.selection_mode = self.selection_mode
+                row.selected = row.alarm_id in selected
+
+    def _apply_selection_state(self, alarm_ids):
+        app = App.get_running_app()
+        available = {str(item.get("id", "")) for item in app.store.all()}
+        unique = []
+        for alarm_id in alarm_ids:
+            alarm_id = str(alarm_id)
+            if alarm_id in available and alarm_id not in unique:
+                unique.append(alarm_id)
+        self.selected_alarm_ids = unique
+        self.selection_mode = bool(unique)
+        self.selected_count = len(unique)
+        self.all_selected = bool(available) and len(unique) == len(available)
+        self._sync_selection_visuals()
+
+    def begin_selection(self, alarm_id):
+        ids = list(self.selected_alarm_ids) if self.selection_mode else []
+        if str(alarm_id) not in ids:
+            ids.append(str(alarm_id))
+        self._apply_selection_state(ids)
+
+    def toggle_selection(self, alarm_id):
+        ids = list(self.selected_alarm_ids)
+        alarm_id = str(alarm_id)
+        if alarm_id in ids:
+            ids.remove(alarm_id)
+        else:
+            ids.append(alarm_id)
+        if not ids:
+            self.cancel_selection()
+        else:
+            self._apply_selection_state(ids)
+
+    def select_all_selected(self):
+        ids = [str(item.get("id", "")) for item in App.get_running_app().store.all()]
+        if not ids or self.all_selected:
+            self.cancel_selection()
+        else:
+            self._apply_selection_state(ids)
+
+    def cancel_selection(self):
+        self.selected_alarm_ids = []
+        self.selection_mode = False
+        self.selected_count = 0
+        self.all_selected = False
+        self._sync_selection_visuals()
+
+    def copy_selected(self):
+        app = App.get_running_app()
+        selected_ids = list(self.selected_alarm_ids)
+        if not selected_ids:
+            return
+        copied_count = 0
+        for alarm_id in selected_ids:
+            alarm = app.store.get(alarm_id)
+            if not alarm:
+                continue
+            duplicate = dict(alarm)
+            duplicate["id"] = new_alarm_id()
+            duplicate["days"] = list(alarm.get("days") or [False] * 7)
+            app.store.put(duplicate)
+            if duplicate.get("enabled", True):
+                app.scheduler.schedule(duplicate)
+            copied_count += 1
+        if copied_count:
+            app.refresh_next_alarm_notification()
+        self.cancel_selection()
+        self.refresh()
+
+    def confirm_delete_selected(self):
+        app = App.get_running_app()
+        selected_ids = list(self.selected_alarm_ids)
+        if not selected_ids:
+            return
+        active = getattr(self, "_delete_popup", None)
+        if active is not None and getattr(active, "is_open", False):
+            return
+
+        count = len(selected_ids)
+        content = RoundedPanel(
+            fill=(0.045, 0.045, 0.052, 1), radius=dp(22),
+            orientation="vertical", padding=(dp(18), dp(14), dp(18), dp(14)),
+            spacing=dp(8),
+        )
+        title = Label(
+            text="DELETE {} ALARM{}?".format(count, "S" if count != 1 else ""),
+            color=(1, 0.42, 0.45, 1), font_size="15sp", bold=True,
+            size_hint_y=None, height=dp(26), halign="center", valign="middle",
+        )
+        title.bind(size=lambda widget, value: setattr(widget, "text_size", value))
+        content.add_widget(title)
+        details = Label(
+            text="This removes the selected alarms and cancels their schedules.",
+            color=(0.72, 0.72, 0.76, 1), font_size="12sp",
+            size_hint_y=None, height=dp(36), halign="center", valign="middle",
+        )
+        details.bind(size=lambda widget, value: setattr(widget, "text_size", value))
+        content.add_widget(details)
+        buttons = BoxLayout(orientation="horizontal", spacing=dp(10),
+                            size_hint_y=None, height=dp(44))
+        popup = Popup(
+            title="", content=content, size_hint=(0.88, None), height=dp(190),
+            separator_height=0, background_color=(0.025, 0.025, 0.03, 1),
+            auto_dismiss=True,
+        )
+
+        def do_delete(*_):
+            for alarm_id in selected_ids:
+                alarm = app.store.get(alarm_id)
+                if alarm:
+                    app.scheduler.cancel(alarm)
+                    app.scheduler.cancel_snooze(alarm)
+                ring = app.root.get_screen("ring")
+                if ring.alarm_id == alarm_id:
+                    ring.finish(reason="delete")
+                app.store.delete(alarm_id)
+            app.refresh_next_alarm_notification()
+            popup.dismiss()
+            self.cancel_selection()
+            self.refresh()
+
+        buttons.add_widget(RoundedActionButton(
+            "CANCEL", callback=lambda: popup.dismiss(), accent=False, size_hint_x=1,
+        ))
+        buttons.add_widget(RoundedActionButton(
+            "DELETE", callback=do_delete, accent=True, size_hint_x=1,
+        ))
+        content.add_widget(buttons)
+        self._delete_popup = popup
+        popup.bind(on_dismiss=lambda *_: setattr(self, "_delete_popup", None))
+        popup.open()
 
     def on_pre_enter(self, *args):
         self.refresh()
         self._refresh_permission_banners()
 
     def go_home(self):
+        if self.selection_mode:
+            self.cancel_selection()
+            return
         App.get_running_app().root.current = "home"
 
     def _refresh_permission_banners(self):
@@ -1559,6 +1821,12 @@ class AlarmListScreen(Screen):
         box.clear_widgets()
 
         alarms = app.store.all()
+        valid_ids = {str(item.get("id", "")) for item in alarms}
+        self.selected_alarm_ids = [item_id for item_id in self.selected_alarm_ids if item_id in valid_ids]
+        if not self.selected_alarm_ids:
+            self.selection_mode = False
+        self.selected_count = len(self.selected_alarm_ids)
+        self.all_selected = bool(alarms) and self.selected_count == len(alarms)
         if not alarms:
             box.add_widget(Label(
                 text="No alarms yet.\nTap + to add one.",
@@ -1574,8 +1842,10 @@ class AlarmListScreen(Screen):
             row.time_text = format_time(alarm["hour"], alarm["minute"])
             label = alarm.get("label") or ""
             days_str = format_days(alarm.get("days"))
-            row.sub_text = (label + " · " + days_str) if label else days_str
+            row.sub_text = label if label else days_str
             row.enabled = bool(alarm.get("enabled", True))
+            row.selection_mode = self.selection_mode
+            row.selected = row.alarm_id in self.selected_alarm_ids
             box.add_widget(row)
 
     def open_permission_settings(self):
@@ -1833,7 +2103,7 @@ class AlarmEditScreen(Screen):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.time_state = {"hour": 7, "minute": 16, "ampm": "AM", "label": "Alarm"}
+        self.time_state = {"hour": 7, "minute": 16, "ampm": "AM", "label": ""}
         self._return_screen = "home"
         # PATCH2_NAV_UI_FIX_V1: an alarm is only a candidate until confirmation DONE.
         self._pending_confirmation_alarm = None
@@ -1844,9 +2114,8 @@ class AlarmEditScreen(Screen):
         self.error_label = self.ui.settings_page.error_label
 
     def on_enter(self, *args):
-        # Time picker is now an inline page, not the legacy button-grid popup.
-        if self.ui.current != "picker":
-            self.ui.show_picker()
+        # The time wheel and all alarm settings now live on one page.
+        self.ui.show_settings()
 
     def handle_hardware_back(self):
         """Close the top modal first, then navigate one editor step backward."""
@@ -1869,11 +2138,8 @@ class AlarmEditScreen(Screen):
             time_popup.dismiss()
             return True
 
-        if self.ui.current == "settings":
-            self.ui.show_picker()
-            return True
-
-        # Back first closes the soft keyboard; a second Back leaves the editor.
+        # There is one editor page now: close the keyboard first, otherwise
+        # discard this unsaved edit and return to the screen that opened it.
         if getattr(self.label_input, "focus", False):
             self.label_input.focus = False
             return True
@@ -1888,7 +2154,7 @@ class AlarmEditScreen(Screen):
         self._return_screen = current_screen if current_screen in ("home", "list") else "home"
         self.error_message = ""
         self.error_label.text = ""
-        self.ui.current = "picker"
+        self.ui.current = "settings"
 
         if alarm_id is None:
             self.editing_id = ""
@@ -1898,7 +2164,7 @@ class AlarmEditScreen(Screen):
                 "hour": hour12,
                 "minute": now.minute,
                 "ampm": "PM" if now.hour >= 12 else "AM",
-                "label": "Alarm",
+                "label": "",
             })
             self.days_selected = [False] * 7
             self.sound_path = ""
@@ -1913,11 +2179,14 @@ class AlarmEditScreen(Screen):
                 return
             self.editing_id = alarm_id
             hour24 = int(alarm.get("hour", 7)) % 24
+            stored_label = str(alarm.get("label") or "").strip()
+            if stored_label.lower() == "alarm":
+                stored_label = ""
             self.time_state.update({
                 "hour": hour24 % 12 or 12,
                 "minute": int(alarm.get("minute", 0)) % 60,
                 "ampm": "PM" if hour24 >= 12 else "AM",
-                "label": str(alarm.get("label") or "Alarm"),
+                "label": stored_label,
             })
             self.days_selected = list(alarm.get("days") or [False] * 7)
             if len(self.days_selected) != 7:
@@ -2139,7 +2408,7 @@ class AlarmEditScreen(Screen):
             return False
 
         if getattr(active, "is_open", False):
-            active.dismiss()
+            active.dismiss(animation=False)
         else:
             # Clean up safely if dismissal has already started.
             self._on_confirmation_dismiss(active)
@@ -2152,9 +2421,10 @@ class AlarmEditScreen(Screen):
         return True
 
     def _on_confirmation_dismiss(self, popup, *_):
-        """Discard an unconfirmed candidate when the confirmation is dismissed."""
-        if getattr(self, "_confirmation_popup", None) is popup:
-            self._confirmation_popup = None
+        """Discard only this popup's candidate, never a newer confirmation."""
+        if getattr(self, "_confirmation_popup", None) is not popup:
+            return
+        self._confirmation_popup = None
         self._pending_confirmation_alarm = None
         self._pending_confirmation_previous = None
 
@@ -2276,6 +2546,10 @@ class AlarmEditScreen(Screen):
         existing_alarm = app.store.get(self.editing_id)
         self._pending_confirmation_previous = dict(existing_alarm) if existing_alarm else None
         # Work on a copy: editing must not mutate the live, previously saved alarm.
+        label_text = str(self.label_input.text or self.time_state.get("label") or "").strip()
+        if len(label_text.split()) > 25:
+            return self._fail("Alarm label can contain up to 25 words.")
+
         alarm = dict(existing_alarm or {})
         sound_path = self.sound_path or app.default_ringtone_path
         sound_name = self.sound_name if self.sound_path else "Default beep"
@@ -2284,7 +2558,7 @@ class AlarmEditScreen(Screen):
             "hour": hour24,
             "minute": minute,
             "days": list(self.days_selected),
-            "label": str(self.time_state.get("label") or self.label_input.text or "Alarm").strip() or "Alarm",
+            "label": label_text or "Alarm",
             "sound_path": sound_path,
             "sound_name": sound_name,
             "volume": volume,
@@ -2584,7 +2858,8 @@ class RedAlarmApp(App):
         confirmation = getattr(edit_screen, "_confirmation_popup", None)
         if confirmation is not None and getattr(confirmation, "is_open", False):
             # Use the same no-save path as the on-screen CANCEL action.
-            return edit_screen.cancel_confirmation(confirmation)
+            edit_screen.cancel_confirmation(confirmation)
+            return True
 
         delete_popup = getattr(list_screen, "_delete_popup", None)
         if delete_popup is not None and getattr(delete_popup, "is_open", False):

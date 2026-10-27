@@ -115,22 +115,22 @@ def main() -> int:
     if "_commit_pending_confirmation()" not in main_text or "self._show_alarm_confirmation(alarm, trigger_dt)" not in main_text:
         fail("Alarm review/commit wiring is missing")
     if "def cancel_confirmation(self, popup=None):" not in main_text:
-        fail("Confirmation Back/outside-tap dismissal handler missing")
-
+        fail("Unified confirmation cancellation handler missing")
+    if 'RoundedActionButton("CANCEL", callback=cancel_review' in main_text:
+        fail("Confirmation popup CANCEL button should be removed")
+    if 'RoundedActionButton("DONE", callback=finish' not in main_text:
+        fail("Confirmation popup DONE button is missing")
     methods = class_methods(main_text)
     confirm = methods.get(("AlarmEditScreen", "_show_alarm_confirmation"))
     if confirm is None:
         fail("AlarmEditScreen confirmation method missing")
 
     confirm_text = source_for_node(main_text, confirm)
-
-    if 'RoundedActionButton("CANCEL", callback=cancel_review' in confirm_text:
-        fail("Confirmation popup CANCEL button should be removed")
-
-    if 'RoundedActionButton("DONE", callback=finish' not in confirm_text:
-        fail("Confirmation DONE button is missing")
-
-    print("PASS: DONE button present; CANCEL button removed; Back dismissal handler retained")
+    cancel_start = confirm_text.find("def cancel_review")
+    cancel_text = confirm_text[cancel_start:] if cancel_start >= 0 else ""
+    if "_commit_pending_confirmation" in cancel_text:
+        fail("CANCEL must never call the alarm commit/schedule path")
+    print("PASS: confirmation commits on DONE; Back cancellation remains available")
 
     if "def _seconds_to_next_wall_second():" not in main_text:
         fail("Wall-second alignment helper missing")
@@ -175,6 +175,47 @@ def main() -> int:
         fail("KV screen definitions are incomplete")
     if "TimePickerPopup" in main_text:
         fail("Orphaned legacy TimePickerPopup reference remains")
+    if "class AlarmSelectionIndicator(ButtonBehavior, Widget):" not in main_text:
+        fail("Alarm-list selection checkbox widget is missing")
+    for marker in ("def begin_selection(", "def toggle_selection(", "def select_all_selected(", "def copy_selected(", "def confirm_delete_selected("):
+        if marker not in main_text:
+            fail("Alarm-list multi-select action is missing: " + marker)
+    if any(marker not in kv_text for marker in ("AlarmSelectionIndicator:", 'text: "Copy"', "root.copy_selected()", "root.confirm_delete_selected()")):
+        fail("Alarm-list long-press toolbar wiring is incomplete")
+    if "MAX_WORDS = 25" not in module_text or "Enter label (optional)" not in module_text:
+        fail("Editable, 25-word alarm-label input is missing")
+    indicator = main_text.split("class AlarmSelectionIndicator(ButtonBehavior, Widget):", 1)[1].split("class AlarmInfoButton", 1)[0]
+    if "toggle_selection(self.row.alarm_id)" not in indicator:
+        fail("Tapping the row checkbox must toggle selection directly")
+    row_class_text = main_text.split("class AlarmRow(BoxLayout):", 1)[1].split("class AlarmListScreen", 1)[0]
+    if "checkbox_touched" not in row_class_text:
+        fail("Tapping/holding a checkbox must not conflict with the row long-press timer")
+    if "width: dp(25) if root.selection_mode else 0" in kv_text or "opacity: 1 if root.selection_mode else 0" in kv_text:
+        fail("Alarm-row checkboxes must remain visible")
+    if 'height: dp(62) if root.selection_mode else 0' in kv_text or 'disabled: not root.selection_mode' in kv_text:
+        fail("Alarm-list bottom action bar must remain visible and enabled")
+    if 'on_release: root.on_delete_press()' not in kv_text or "def confirm_delete(self, alarm_id):" not in main_text:
+        fail("Individual alarm delete with confirmation must remain available")
+    if 'kwargs["input_type"] = "text"' not in module_text or 'kwargs["keyboard_suggestions"] = True' not in module_text:
+        fail("Label input must request a text keyboard with suggestions")
+    if 'kwargs["disabled_foreground_color"] = (1, 1, 1, 1)' not in module_text:
+        fail("Label input disabled text must remain readable")
+    print("PASS: permanent checkboxes/action bar, individual delete confirmation, and bulk actions")
+    print("PASS: readable label text, text keyboard, suggestions, and 25-word cap")
+    if 'size: dp(24), dp(24)' not in kv_text or 'anchor_y: "center"' not in kv_text:
+        fail("Alarm selection checkbox must be a fixed-size, vertically centred control")
+    ring_activity_path = ROOT / "android_src" / "org" / "yashtech" / "redalarm" / "RedAlarmRingActivity.java"
+    ring_service_path = ROOT / "android_src" / "org" / "yashtech" / "redalarm" / "RedAlarmRingingService.java"
+    if not ring_activity_path.is_file() or not ring_service_path.is_file():
+        fail("Native ringing activity/service is missing")
+    ring_activity_text = ring_activity_path.read_text(encoding="utf-8")
+    ring_service_text = ring_service_path.read_text(encoding="utf-8")
+    if 'countdownTitle.setText("AUTO-DISMISS IN")' not in ring_activity_text or 'countdownValue.setText' not in ring_activity_text:
+        fail("Native lock-screen alarm must display an auto-dismiss countdown")
+    if 'ring_started_elapsed:' not in ring_service_text or 'ring_duration_sec:' not in ring_service_text:
+        fail("Native ringing service must save the visible countdown deadline")
+    print("PASS: alarm checkboxes use a fixed-size centred layout")
+    print("PASS: native lock-screen ring screen displays the auto-dismiss countdown")
     print("PASS: active screen boundaries and obsolete picker handlers")
     print("ALL STATIC REGRESSION CHECKS PASSED; device tests are still required.")
     return 0
