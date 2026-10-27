@@ -62,6 +62,7 @@ public final class RedAlarmRingingService extends Service {
         Notification notification = buildNotification(id, config);
         try { startForeground(NOTIFICATION_ID, notification); }
         catch (Throwable e) { android.util.Log.e("RedAlarmNative", "startForeground failed", e); }
+        RedAlarmUnlockedOverlay.show(this, id, config);
         acquireWakeLock(duration + 15);
         startAudio(config);
         if (config.optBoolean("vibrate", false)) startVibration();
@@ -228,6 +229,7 @@ public final class RedAlarmRingingService extends Service {
         }
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.cancel(NOTIFICATION_ID);
+        RedAlarmUnlockedOverlay.hide(this);
         super.onDestroy();
     }
 }
