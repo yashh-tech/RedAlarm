@@ -49,7 +49,7 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
-from kivy.uix.screenmanager import ScreenManager, Screen
+from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
 from redalarm_timepicker import AlarmEditorUI, RoundedActionButton, RoundedPanel, format_duration
@@ -332,6 +332,30 @@ if ANDROID:
             perms.append(Permission.POST_NOTIFICATIONS)
         if perms:
             request_permissions(perms)
+
+    def android_update_alarm_widgets(trigger_dt, label=""):
+        """Publish display-only upcoming-alarm data to home-screen widgets.
+
+        This does not schedule, stop, or otherwise control any alarm service.
+        """
+        try:
+            context = _activity().getApplicationContext()
+            prefs = context.getSharedPreferences("redalarm_widget", Context.MODE_PRIVATE)
+            edit = prefs.edit()
+            if trigger_dt is None:
+                edit.putBoolean("has_next_alarm", False)
+                edit.putLong("next_alarm_at", 0)
+                edit.putString("next_alarm_label", JString(""))
+            else:
+                edit.putBoolean("has_next_alarm", True)
+                edit.putLong("next_alarm_at", int(trigger_dt.timestamp() * 1000))
+                edit.putString("next_alarm_label", JString(str(label or "Alarm")))
+            edit.apply()
+            update = Intent(JString("org.yashtech.redalarm.UPDATE_WIDGETS"))
+            update.setPackage(context.getPackageName())
+            context.sendBroadcast(update)
+        except Exception as exc:
+            print("[RedAlarm] widget data refresh unavailable:", exc)
 
     def android_read_incoming_alarm():
         """(alarm_id, fire_token, action_kind) the activity was (re)launched
@@ -1078,6 +1102,42 @@ def ensure_default_ringtone(cache_dir):
     return path
 
 
+def ensure_builtin_ringtones(cache_dir):
+    """Create five small, licence-free built-in alarm tones on first use."""
+    os.makedirs(cache_dir, exist_ok=True)
+    import wave
+    import struct
+    choices = [("Classic Beep", ensure_default_ringtone(cache_dir))]
+    patterns = [
+        ("Pulse", [(740, .12), (0, .08), (880, .18), (0, .10), (740, .12)]),
+        ("Double Alert", [(1040, .12), (0, .10), (1040, .12), (0, .22), (1310, .22)]),
+        ("Rising Tone", [(520, .16), (660, .16), (820, .16), (1040, .28)]),
+        ("Digital", [(1320, .07), (0, .06), (990, .07), (0, .06), (1320, .07), (0, .16), (880, .22)]),
+    ]
+    rate = 22050
+    for name, sequence in patterns:
+        path = os.path.join(cache_dir, "builtin_{}.wav".format(name.lower().replace(" ", "_")))
+        if not os.path.isfile(path):
+            samples = []
+            for frequency, seconds in sequence:
+                count = int(rate * seconds)
+                if frequency <= 0:
+                    samples.extend([0] * count)
+                    continue
+                for index in range(count):
+                    t = index / float(rate)
+                    envelope = min(1.0, t * 45.0) * min(1.0, (seconds - t) * 18.0)
+                    sample = int(0.48 * envelope * 32767 * math.sin(2 * math.pi * frequency * t))
+                    samples.append(max(-32768, min(32767, sample)))
+            with wave.open(path, "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(rate)
+                wav.writeframes(b"".join(struct.pack("<h", value) for value in samples))
+        choices.append((name, path))
+    return choices
+
+
 def pick_ringtone_file(on_chosen, on_error):
     """Open a file picker. On Android this goes straight to the native
     document picker (plyer's filechooser is flaky on several OEM skins/API
@@ -1234,9 +1294,9 @@ class AnalogClock(Widget):
         self._last_second = None
         self._numerals = {}
         self.bind(pos=self._force_redraw, size=self._force_redraw)
-        self._tick_event = Clock.schedule_once(
-            self._tick, _seconds_to_next_wall_second()
-        )
+        # Draw from wall time frequently instead of maintaining a relative timer;
+        # this prevents missed callbacks leaving a stale second hand/pin.
+        self._tick_event = Clock.schedule_interval(self._tick, 1.0 / 30.0)
         self._redraw()
 
     def _force_redraw(self, *_):
@@ -1244,12 +1304,9 @@ class AnalogClock(Widget):
         self._redraw()
 
     def _tick(self, dt):
-        # Re-align after each tick instead of accumulating interval drift.
-        self._tick_event = None
+        # Re-read wall time each frame, so the hand stays aligned to real time.
         self._redraw()
-        self._tick_event = Clock.schedule_once(
-            self._tick, _seconds_to_next_wall_second()
-        )
+        return True
 
     def _numeral_texture(self, number, font_px):
         key = (number, font_px)
@@ -1270,6 +1327,7 @@ class AnalogClock(Widget):
 
         now = datetime.datetime.now()
         self._last_second = now.second
+        second_position = now.second + now.microsecond / 1000000.0
         minute = now.minute + now.second / 60.0
         hour = (now.hour % 12) + minute / 60.0
 
@@ -1325,8 +1383,8 @@ class AnalogClock(Widget):
 
             # second hand (with a short tail) + centre pin
             Color(0.90, 0.12, 0.15, 1)
-            Line(points=[*pt(now.second * 6 + 180, radius * 0.16),
-                         *pt(now.second * 6, radius * 0.86)],
+            Line(points=[*pt(second_position * 6 + 180, radius * 0.16),
+                         *pt(second_position * 6, radius * 0.86)],
                  width=dp(1.3), cap="round")
             Ellipse(pos=(cx - dp(6), cy - dp(6)), size=(dp(12), dp(12)))
             Color(0.05, 0.05, 0.05, 1)
@@ -1368,7 +1426,7 @@ class IOSToggle(ButtonBehavior, Widget):
         self.canvas.clear()
         if self.width <= 0 or self.height <= 0:
             return
-        track = (0.82, 0.10, 0.13, 1) if self.active else (0.40, 0.38, 0.38, 1)
+        track = (0.6118, 0.0471, 0.0471, 1) if self.active else (0.11, 0.11, 0.12, 1)
         pad = self.height * 0.10
         d = self.height - 2 * pad
         travel = self.width - d - 2 * pad
@@ -1448,6 +1506,7 @@ class AlarmInfoButton(ButtonBehavior, BoxLayout):
     row = ObjectProperty(None)
     time_text = StringProperty("")
     sub_text = StringProperty("")
+    primary_label = BooleanProperty(False)
     dim = BooleanProperty(False)
 
     def on_release(self):
@@ -1533,6 +1592,7 @@ class AlarmRow(BoxLayout):
     alarm_id = StringProperty("")
     time_text = StringProperty("")
     sub_text = StringProperty("")
+    label_is_primary = BooleanProperty(False)
     enabled = BooleanProperty(True)
     list_screen = ObjectProperty(None)
     selection_mode = BooleanProperty(False)
@@ -1843,6 +1903,7 @@ class AlarmListScreen(Screen):
             label = alarm.get("label") or ""
             days_str = format_days(alarm.get("days"))
             row.sub_text = label if label else days_str
+            row.label_is_primary = bool(label)
             row.enabled = bool(alarm.get("enabled", True))
             row.selection_mode = self.selection_mode
             row.selected = row.alarm_id in self.selected_alarm_ids
@@ -2098,7 +2159,7 @@ class AlarmEditScreen(Screen):
     vibrate = BooleanProperty(False)
     volume = NumericProperty(0.80)
     auto_dismiss_sec = NumericProperty(5)
-    snooze_sec = NumericProperty(60)
+    snooze_sec = NumericProperty(300)
     error_message = StringProperty("")
 
     def __init__(self, **kwargs):
@@ -2124,6 +2185,10 @@ class AlarmEditScreen(Screen):
         confirmation = getattr(self, "_confirmation_popup", None)
         if confirmation is not None and getattr(confirmation, "is_open", False):
             self.cancel_confirmation(confirmation)
+            return True
+
+        if getattr(self, "ui", None) is not None and self.ui.current == "sound":
+            self.ui.show_settings()
             return True
             
 
@@ -2172,7 +2237,7 @@ class AlarmEditScreen(Screen):
             self.vibrate = False
             self.volume = 0.80
             self.auto_dismiss_sec = 5
-            self.snooze_sec = 60
+            self.snooze_sec = 300
         else:
             alarm = App.get_running_app().store.get(alarm_id)
             if not alarm:
@@ -2198,8 +2263,8 @@ class AlarmEditScreen(Screen):
                 self.volume = max(0.0, min(1.0, float(alarm.get("volume", 0.80))))
             except (TypeError, ValueError):
                 self.volume = 0.80
-            self.auto_dismiss_sec = max(1, min(10800, int(alarm.get("auto_dismiss_sec", 5) or 5)))
-            self.snooze_sec = max(3, min(10800, int(alarm.get("snooze_sec", 60) or 60)))
+            self.auto_dismiss_sec = max(1, min(3600, int(alarm.get("auto_dismiss_sec", 5) or 5)))
+            self.snooze_sec = max(3, min(3600, int(alarm.get("snooze_sec", 300) or 300)))
 
         self.ampm = self.time_state["ampm"]
         self.ui.picker_page.set_values(
@@ -2250,6 +2315,22 @@ class AlarmEditScreen(Screen):
         self.ui.picker_page.set_values(hour12, minute, ampm, self.time_state.get("label", ""))
         self.ui.settings_page.refresh_time()
 
+
+    def builtin_sound_choices(self):
+        app = App.get_running_app()
+        return ensure_builtin_ringtones(app.ringtone_cache_dir)
+
+    def open_sound_page(self):
+        self.ui.show_sound()
+
+    def set_builtin_sound(self, name, path):
+        self.sound_path = str(path or "")
+        self.sound_name = str(name or "Classic Beep")
+        self.error_message = ""
+        self.error_label.text = ""
+        self.ui.settings_page.refresh_sound()
+        self.ui.show_settings()
+        self.preview_sound()
 
     def choose_builtin_sound(self):
         """Select and preview the app's existing default beep."""
@@ -2303,6 +2384,7 @@ class AlarmEditScreen(Screen):
         self.error_message = ""
         self.error_label.text = ""
         self.ui.settings_page.refresh_sound()
+        self.ui.show_settings()
 
     def preview_sound(self):
         self.error_message = ""
@@ -2821,7 +2903,38 @@ class AlarmRingScreen(Screen):
 
 
 class RootManager(ScreenManager):
-    pass
+    """Fast screen transitions plus horizontal swipe navigation."""
+    def __init__(self, **kwargs):
+        kwargs.setdefault("transition", SlideTransition(duration=0.14))
+        super().__init__(**kwargs)
+        self._swipe_start = None
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos) and not getattr(touch, "is_mouse_scrolling", False):
+            self._swipe_start = (touch, tuple(touch.pos), self.current)
+        return super().on_touch_down(touch)
+
+    def on_touch_up(self, touch):
+        start = self._swipe_start
+        self._swipe_start = None
+        handled = super().on_touch_up(touch)
+        if not start or start[0] is not touch or self.current != start[2]:
+            return handled
+        dx = touch.x - start[1][0]
+        dy = touch.y - start[1][1]
+        if abs(dx) < dp(90) or abs(dx) < abs(dy) * 1.35 or self.current == "ring":
+            return handled
+        if dx < 0:  # swipe left = back
+            if self.current == "edit":
+                self.get_screen("edit").cancel_edit()
+            elif self.current == "list":
+                self.get_screen("list").go_home()
+        else:  # swipe right = forward
+            if self.current == "home":
+                self.current = "list"
+            elif self.current == "list":
+                self.get_screen("list").open_new_alarm()
+        return True
 
 
 # ======================================================================
@@ -2990,6 +3103,8 @@ class RedAlarmApp(App):
 
         Window.remove_widget(self._splash)
         Window.add_widget(root)
+        if ANDROID:
+            self.refresh_next_alarm_notification()
 
 
     # ---- Samsung "Never sleeping apps" guidance (one-time / infrequent) ----
@@ -3127,6 +3242,24 @@ class RedAlarmApp(App):
     def refresh_next_alarm_notification(self):
         """Public hook for alarm creation, toggles, edits, and dismiss/snooze."""
         self._refresh_next_alarm_notification()
+        if ANDROID:
+            now = datetime.datetime.now()
+            best = None
+            best_alarm = None
+            for alarm in self.store.all():
+                if not alarm.get("enabled", True):
+                    continue
+                try:
+                    trigger = self.scheduler.next_trigger_for(str(alarm.get("id", "")))
+                    if trigger is None:
+                        trigger = compute_next_trigger_dt(alarm, now=now)
+                    if best is None or trigger < best:
+                        best, best_alarm = trigger, alarm
+                except Exception as exc:
+                    print("[RedAlarm] skipping widget trigger:", exc)
+            android_update_alarm_widgets(
+                best, str((best_alarm or {}).get("label") or "Alarm") if best else ""
+            )
 
     def on_resume(self):
         # Fires when Android brings this activity back to the foreground —

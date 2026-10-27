@@ -30,10 +30,10 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.graphics import Color, Ellipse, Line, RoundedRectangle, Rectangle, Triangle
 
-BG = (0.014, 0.014, 0.017, 1)
-CARD = (0.045, 0.045, 0.051, 1)
-CARD_EDGE = (0.105, 0.105, 0.117, 1)
-WHEEL_BG = (0.022, 0.022, 0.027, 1)
+BG = (0.0, 0.0, 0.0, 1)
+CARD = (0.055, 0.055, 0.06, 1)
+CARD_EDGE = (0.16, 0.16, 0.18, 1)
+WHEEL_BG = (0.018, 0.018, 0.022, 1)
 RED = (156 / 255.0, 12 / 255.0, 12 / 255.0, 1)
 RED_SOFT = (0.17, 0.025, 0.028, 1)
 TEXT = (0.975, 0.975, 0.985, 1)
@@ -384,7 +384,7 @@ class SpinnerWheel(Widget):
         self.row_height = dp(56)
         # Natural one-finger response: a normal drag advances the dial without feeling sticky.
         self.drag_sensitivity = 1.55  # responsive to short, small finger drags
-        self.max_fling_velocity = 6.00  # native-clock-style flick without an excessive jump
+        self.max_fling_velocity = 6.00  # Keep a natural flick, then coast down gradually.
         if selected_value not in self.values:
             selected_value = self.values[0]
         self._active_value = selected_value
@@ -648,8 +648,8 @@ class SpinnerWheel(Widget):
                 self._start_settle()
                 return False
         self._set_position(next_pos)
-        self._velocity *= math.exp(-2.8 * dt)
-        if abs(self._velocity) < 0.25:
+        self._velocity *= math.exp(-1.8 * dt)
+        if abs(self._velocity) < 0.13:
             self._fling_event = None
             self._start_settle()
             return False
@@ -662,7 +662,7 @@ class SpinnerWheel(Widget):
         Animation.cancel_all(self, "position")
         target = self._bounded(self._round_index(self.position))
         # Longer eased settle is intentionally gentle near the selected value.
-        animation = Animation(position=float(target), duration=0.30, t="out_cubic")
+        animation = Animation(position=float(target), duration=0.38, t="out_cubic")
         self._settle_animation = animation
         animation.start(self)
 
@@ -674,11 +674,11 @@ class WheelPanel(BoxLayout):
         with self.canvas.before:
             Color(rgba=WHEEL_BG)
             self._bg = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(24)])
-            # Keep fill subtle and opaque, same shared bounds as the outline.
-            Color(rgba=RED_SOFT)
-            self._fill = RoundedRectangle(pos=self.pos, size=(self.width, dp(56)), radius=[dp(20)])
+            # The selected row is indicated by a fixed, bright-red horizontal line.
+            Color(rgba=(0, 0, 0, 0))
+            self._fill = RoundedRectangle(pos=self.pos, size=(self.width, dp(1)), radius=[0])
             Color(rgba=(RED[0], RED[1], RED[2], 1))
-            self._outline = Line(rounded_rectangle=(self.x, self.y, self.width, dp(56), dp(20)), width=dp(1.35))
+            self._outline = Line(points=[], width=dp(1.35))
             Color(rgba=(0.22, 0.22, 0.24, 0.65))
             self._div_a = Line(points=[], width=dp(0.7))
             self._div_b = Line(points=[], width=dp(0.7))
@@ -696,12 +696,10 @@ class WheelPanel(BoxLayout):
         w, h = self.size
         self._bg.pos, self._bg.size = self.pos, self.size
         bx, bw = x - dp(10), w + dp(20)
-        selector_height = min(dp(56), float(getattr(self, "selector_height", dp(56))))
-        radius = min(dp(20), selector_height / 2.0)
-        by, bh = self.center_y - selector_height / 2.0, selector_height
+        by, bh = self.center_y - dp(0.8), dp(1.6)
         self._fill.pos, self._fill.size = (bx, by), (bw, bh)
-        self._fill.radius = [radius]
-        self._outline.rounded_rectangle = (bx, by, bw, bh, radius)
+        self._fill.radius = [0]
+        self._outline.points = [bx, self.center_y, bx + bw, self.center_y]
         xx1, xx2 = x + w / 3, x + (2 * w / 3)
         self._div_a.points = [xx1, y + dp(18), xx1, y + h - dp(18)]
         self._div_b.points = [xx2, y + dp(18), xx2, y + h - dp(18)]
@@ -1161,13 +1159,13 @@ def _parse_duration(text, current_value):
 
 
 class DurationRow(BoxLayout):
-    """Bounded duration control: seconds presets, then minutes up to 3 Hr."""
+    """Bounded duration control: seconds presets, then minutes up to 60 minutes."""
     # Numeric order is used for the +/- stepper so it behaves naturally.
     PRESETS = (list(range(1, 11)) + [15, 30] + [60 * m for m in range(1, 11)]
-               + [15 * 60, 30 * 60] + list(range(45 * 60, 180 * 60 + 1, 15 * 60)))
+               + [15 * 60, 30 * 60] + list(range(45 * 60, 60 * 60 + 1, 15 * 60)))
     # The selection sheet presents short test intervals in the requested order.
     DISPLAY_PRESETS = (list(range(1, 11)) + [15, 30] + [60 * m for m in range(1, 11)]
-                       + [15 * 60, 30 * 60] + list(range(45 * 60, 180 * 60 + 1, 15 * 60)))
+                       + [15 * 60, 30 * 60] + list(range(45 * 60, 60 * 60 + 1, 15 * 60)))
 
     def __init__(self, title, subtitle, value, min_value, max_value, on_change, **kwargs):
         super().__init__(orientation="horizontal", spacing=dp(7), **kwargs)
@@ -1298,6 +1296,7 @@ class DurationRow(BoxLayout):
 
         longer_values = ([60 * m for m in range(1, 11)] + [15 * 60, 30 * 60]
                          + list(range(45 * 60, 180 * 60 + 1, 15 * 60)))
+        longer_values = [value for value in longer_values if self.min_value <= value <= self.max_value]
         longer_grid = GridLayout(
             cols=3, spacing=dp(6), padding=0,
             size_hint_y=None, row_default_height=dp(36), row_force_default=True,
@@ -1416,7 +1415,7 @@ class AlarmAppSettingsPage(BoxLayout):
         header.add_widget(self._label("A L A R M   S E T T I N G S", 12.5, SUB, True, dp(22)))
         self.card.add_widget(header)
 
-        self.wheel_panel = WheelPanel(size_hint_y=None, height=dp(190))
+        self.wheel_panel = WheelPanel(size_hint_y=None, height=dp(228))
         self.hour_wheel = SpinnerWheel(
             list(range(1, 13)), self.editor.time_state["hour"],
             lambda value: self._change_time("hour", value),
@@ -1510,23 +1509,10 @@ class AlarmAppSettingsPage(BoxLayout):
         sound_row.add_widget(self.preview_button)
         sound_block.add_widget(sound_row)
 
-        sound_actions = BoxLayout(
-            orientation="horizontal", spacing=dp(8),
-            size_hint_y=None, height=dp(34),
-        )
-        local_music = RoundedActionButton(
-            "LOCAL MUSIC", callback=self.editor.choose_sound, accent=False,
-            size_hint_x=1,
-        )
-        local_music.font_size = sp(9)
-        built_in = RoundedActionButton(
-            "BUILT-IN", callback=self.editor.choose_builtin_sound, accent=True,
-            size_hint_x=1,
-        )
-        built_in.font_size = sp(9)
-        sound_actions.add_widget(local_music)
-        sound_actions.add_widget(built_in)
-        sound_block.add_widget(sound_actions)
+        sound_block.add_widget(RoundedActionButton(
+            "CHANGE SOUND", callback=self.editor.open_sound_page, accent=True,
+            size_hint=(1, None), height=dp(36),
+        ))
         self.content.add_widget(sound_block)
 
         volume_row = BoxLayout(orientation="horizontal", spacing=dp(8),
@@ -1557,19 +1543,19 @@ class AlarmAppSettingsPage(BoxLayout):
         self.content.add_widget(vibration)
         self.content.add_widget(self._separator())
 
-        self.dismiss_control = DurationRow(
-            "AUTO-DISMISS", "Stop alarm automatically", int(self.editor.auto_dismiss_sec),
-            1, 10800, lambda val: setattr(self.editor, "auto_dismiss_sec", val),
-            size_hint_y=None, height=dp(58),
-        )
-        self.content.add_widget(self.dismiss_control)
-        self.content.add_widget(self._separator())
         self.snooze_control = DurationRow(
             "SNOOZE", "Repeat alarm after", int(self.editor.snooze_sec),
-            3, 10800, lambda val: setattr(self.editor, "snooze_sec", val),
+            3, 3600, lambda val: setattr(self.editor, "snooze_sec", val),
             size_hint_y=None, height=dp(58),
         )
         self.content.add_widget(self.snooze_control)
+        self.content.add_widget(self._separator())
+        self.dismiss_control = DurationRow(
+            "AUTO-DISMISS", "Stop alarm automatically", int(self.editor.auto_dismiss_sec),
+            1, 3600, lambda val: setattr(self.editor, "auto_dismiss_sec", val),
+            size_hint_y=None, height=dp(58),
+        )
+        self.content.add_widget(self.dismiss_control)
         self.content.add_widget(self._separator())
         self.error_label = self._label("", 11.5, RED, False, dp(20))
         self.content.add_widget(self.error_label)
@@ -1666,10 +1652,42 @@ class AlarmAppSettingsPage(BoxLayout):
             self.footer.remove_widget(self.delete_button)
 
 
+class SoundSelectionPage(BoxLayout):
+    """Dedicated editor page for built-in alarm tones and local audio."""
+    def __init__(self, editor, on_back, **kwargs):
+        super().__init__(orientation="vertical", padding=dp(16), spacing=dp(10), **kwargs)
+        self.editor = editor
+        self.on_back = on_back
+        top = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(48), spacing=dp(8))
+        top.add_widget(RoundedActionButton("BACK", callback=self.on_back, accent=False,
+                                           size_hint=(None, None), size=(dp(82), dp(42))))
+        heading = Label(text="CHOOSE SOUND", color=TEXT, bold=True, font_size=sp(17))
+        top.add_widget(heading)
+        self.add_widget(top)
+        self.note = Label(text="Five built-in tones  ·  choose one to preview", color=SUB,
+                          font_size=sp(12), size_hint_y=None, height=dp(28))
+        self.add_widget(self.note)
+        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(2))
+        self.choices = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(9))
+        self.choices.bind(minimum_height=self.choices.setter("height"))
+        scroll.add_widget(self.choices)
+        self.add_widget(scroll)
+        self.add_widget(RoundedActionButton("LOCAL MUSIC  ·  BROWSE DEVICE", callback=self.editor.choose_sound,
+                                            accent=True, size_hint_y=None, height=dp(48)))
+
+    def refresh(self):
+        self.choices.clear_widgets()
+        for name, path in self.editor.builtin_sound_choices():
+            self.choices.add_widget(RoundedActionButton(
+                name, callback=lambda n=name, p=path: self.editor.set_builtin_sound(n, p),
+                accent=(name == self.editor.sound_name), size_hint_y=None, height=dp(48),
+            ))
+
+
 class AlarmEditorUI(ScreenManager):
     """Single-page alarm editor with the time wheel and settings together."""
     def __init__(self, editor, **kwargs):
-        kwargs.setdefault("transition", SlideTransition(duration=0.0, direction="left"))
+        kwargs.setdefault("transition", SlideTransition(duration=0.12, direction="left"))
         super().__init__(**kwargs)
         self.editor = editor
         self.settings_screen = Screen(name="settings")
@@ -1679,11 +1697,23 @@ class AlarmEditorUI(ScreenManager):
         self.picker_page = self.settings_page
         self.settings_screen.add_widget(self.settings_page)
         self.add_widget(self.settings_screen)
+        self.sound_screen = Screen(name="sound")
+        self.sound_page = SoundSelectionPage(editor, on_back=self.show_settings)
+        self.sound_screen.add_widget(self.sound_page)
+        self.add_widget(self.sound_screen)
         self.current = "settings"
 
     def show_settings(self):
         self.settings_page.refresh_from_editor()
+        if hasattr(self, "transition"):
+            self.transition.direction = "right"
         self.current = "settings"
+
+    def show_sound(self):
+        self.sound_page.refresh()
+        if hasattr(self, "transition"):
+            self.transition.direction = "left"
+        self.current = "sound"
 
     def show_picker(self):
         # Legacy entry point now keeps the user on the combined editor page.

@@ -93,12 +93,12 @@ def main() -> int:
         if parse(text, 300) != expected:
             fail("_parse_duration({!r}) mismatch".format(text))
     presets = class_assign_value(module_text, "DurationRow", "PRESETS")
-    if presets != sorted(set(presets)) or presets[0] != 1 or presets[-1] != 10800:
-        fail("DurationRow.PRESETS must be unique, sorted, bounded by 1 sec/3 Hr")
+    if presets != sorted(set(presets)) or presets[0] != 1 or presets[-1] != 3600:
+        fail("DurationRow.PRESETS must be unique, sorted, bounded by 1 sec/60 min")
     # Auto-dismiss is allowed down to 1 second; SnoozeRow separately enforces 3 seconds.
-    if any(value not in presets for value in (1, 3, 5, 10, 15, 30, 60, 600, 900, 1800, 2700, 10800)):
+    if any(value not in presets for value in (1, 3, 5, 10, 15, 30, 60, 600, 900, 1800, 2700, 3600)):
         fail("A required duration preset is missing")
-    print("PASS: duration labels, parser, ordered presets and 3 Hr cap")
+    print("PASS: duration labels, parser, ordered presets and 60 min cap")
 
     if sum(1 for n in ast.walk(main_tree)
            if isinstance(n, ast.FunctionDef) and n.name == "open_time_picker") != 1:
@@ -136,10 +136,13 @@ def main() -> int:
         fail("Wall-second alignment helper missing")
     home = methods.get(("HomeScreen", "_wall_clock_tick"))
     analog = methods.get(("AnalogClock", "_tick"))
+    analog_init = methods.get(("AnalogClock", "__init__"))
     if home is None or "Clock.schedule_once" not in source_for_node(main_text, home):
         fail("Home countdown is not re-aligned to wall-clock seconds")
-    if analog is None or "Clock.schedule_once" not in source_for_node(main_text, analog):
-        fail("Analog clock is not re-aligned to wall-clock seconds")
+    if (analog is None or analog_init is None
+            or "Clock.schedule_interval(self._tick, 1.0 / 30.0)" not in source_for_node(main_text, analog_init)
+            or "return True" not in source_for_node(main_text, analog)):
+        fail("Analog clock must redraw smoothly from wall time")
     helper = extract_functions(main_text, {"_seconds_to_next_wall_second"}, {"datetime": datetime})
     delay = helper["_seconds_to_next_wall_second"]()
     if not 0 < delay <= 1:
@@ -190,17 +193,17 @@ def main() -> int:
     row_class_text = main_text.split("class AlarmRow(BoxLayout):", 1)[1].split("class AlarmListScreen", 1)[0]
     if "checkbox_touched" not in row_class_text:
         fail("Tapping/holding a checkbox must not conflict with the row long-press timer")
-    if "width: dp(25) if root.selection_mode else 0" in kv_text or "opacity: 1 if root.selection_mode else 0" in kv_text:
-        fail("Alarm-row checkboxes must remain visible")
-    if 'height: dp(62) if root.selection_mode else 0' in kv_text or 'disabled: not root.selection_mode' in kv_text:
-        fail("Alarm-list bottom action bar must remain visible and enabled")
+    if 'width: dp(30) if root.selection_mode else 0' not in kv_text or 'opacity: 1 if root.selection_mode else 0' not in kv_text:
+        fail("Alarm-row checkboxes should appear only in selection mode")
+    if 'height: dp(62) if root.selection_mode else 0' not in kv_text or 'disabled: not root.selection_mode' not in kv_text:
+        fail("Alarm-list bulk action bar should be hidden until long-press selection")
     if 'on_release: root.on_delete_press()' not in kv_text or "def confirm_delete(self, alarm_id):" not in main_text:
         fail("Individual alarm delete with confirmation must remain available")
     if 'kwargs["input_type"] = "text"' not in module_text or 'kwargs["keyboard_suggestions"] = True' not in module_text:
         fail("Label input must request a text keyboard with suggestions")
     if 'kwargs["disabled_foreground_color"] = (1, 1, 1, 1)' not in module_text:
         fail("Label input disabled text must remain readable")
-    print("PASS: permanent checkboxes/action bar, individual delete confirmation, and bulk actions")
+    print("PASS: long-press checkboxes/action bar, individual delete confirmation, and bulk actions")
     print("PASS: readable label text, text keyboard, suggestions, and 25-word cap")
     if 'size: dp(24), dp(24)' not in kv_text or 'anchor_y: "center"' not in kv_text:
         fail("Alarm selection checkbox must be a fixed-size, vertically centred control")

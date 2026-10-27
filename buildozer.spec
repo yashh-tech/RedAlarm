@@ -21,7 +21,7 @@ orientation = portrait
 # is no white flash - it matches the in-app RedAlarm splash.
 presplash.filename = %(source.dir)s/presplash2.png
 android.presplash_color = #000000
-fullscreen = 0
+fullscreen = 1
 
 # API 34 is a safer target for the current python-for-android toolchain.
 android.api = 34
@@ -56,6 +56,7 @@ android.manifest.launch_mode = singleTask
 # showWhenLocked + turnScreenOn on every activity at creation time, and the
 # manifest <application> tag is pointed at it. See RedAlarmApplication.java.
 android.add_src = java_src,android_src
+android.add_resources = android_src/res
 p4a.hook = java_src/manifest_hook.py
 android.extra_manifest_application_arguments = ./extra_manifest_application_arguments.xml
 

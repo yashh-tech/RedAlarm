@@ -1,8 +1,8 @@
-#:set COL_BG        (0.04, 0.04, 0.045, 1)
-#:set COL_CARD      (0.11, 0.09, 0.09, 1)
-#:set COL_CARD_DIM  (0.085, 0.075, 0.075, 1)
-#:set COL_RED       (0.82, 0.10, 0.13, 1)
-#:set COL_RED_DIM   (0.42, 0.06, 0.08, 1)
+#:set COL_BG        (0.0, 0.0, 0.0, 1)
+#:set COL_CARD      (0.055, 0.055, 0.06, 1)
+#:set COL_CARD_DIM  (0.03, 0.03, 0.035, 1)
+#:set COL_RED       (0.6118, 0.0471, 0.0471, 1)
+#:set COL_RED_DIM   (0.25, 0.025, 0.03, 1)
 #:set COL_TEXT      (0.96, 0.96, 0.96, 1)
 #:set COL_SUBTEXT   (0.62, 0.58, 0.58, 1)
 
@@ -128,7 +128,7 @@
 
     Label:
         text: root.time_text
-        color: COL_SUBTEXT if root.dim else COL_TEXT
+        color: COL_TEXT
         font_size: "26sp"
         bold: True
         halign: "left"
@@ -137,7 +137,7 @@
 
     Label:
         text: root.sub_text
-        color: COL_SUBTEXT
+        color: COL_TEXT if root.primary_label else COL_SUBTEXT
         font_size: "13sp"
         halign: "left"
         valign: "middle"
@@ -166,13 +166,16 @@
 
     AnchorLayout:
         size_hint: None, 1
-        width: dp(30)
+        width: dp(30) if root.selection_mode else 0
+        opacity: 1 if root.selection_mode else 0
+        disabled: not root.selection_mode
         anchor_x: "center"
         anchor_y: "center"
 
         AlarmSelectionIndicator:
             row: root
             selected: root.selected
+            disabled: not root.selection_mode
             size_hint: None, None
             size: dp(24), dp(24)
 
@@ -180,6 +183,7 @@
         row: root
         time_text: root.time_text
         sub_text: root.sub_text
+        primary_label: root.label_is_primary
         dim: not root.enabled
 
     Button:
@@ -321,9 +325,9 @@
         BoxLayout:
             orientation: "horizontal"
             size_hint_y: None
-            height: dp(62)
-            opacity: 1
-            disabled: False
+            height: dp(62) if root.selection_mode else 0
+            opacity: 1 if root.selection_mode else 0
+            disabled: not root.selection_mode
             spacing: dp(10)
             padding: 0, dp(6), 0, 0
             canvas.before:
