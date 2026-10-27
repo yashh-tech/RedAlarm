@@ -124,6 +124,7 @@ def main() -> int:
     confirm = methods.get(("AlarmEditScreen", "_show_alarm_confirmation"))
     if confirm is None:
         fail("AlarmEditScreen confirmation method missing")
+
     confirm_text = source_for_node(main_text, confirm)
     cancel_start = confirm_text.find("def cancel_review")
     cancel_text = confirm_text[cancel_start:] if cancel_start >= 0 else ""
