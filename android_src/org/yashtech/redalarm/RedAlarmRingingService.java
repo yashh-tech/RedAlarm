@@ -52,7 +52,8 @@ public final class RedAlarmRingingService extends Service {
         handler.removeCallbacks(timeout);
         alarmId = id;
         session++;
-        int duration = Math.max(1, Math.min(10800, config.optInt("auto_dismiss_sec", 5)));
+        boolean autoDismissEnabled = config.optBoolean("auto_dismiss_enabled", true);
+        int duration = autoDismissEnabled ? Math.max(1, Math.min(10800, config.optInt("auto_dismiss_sec", 5))) : 0;
         final long ringStartedElapsed = android.os.SystemClock.elapsedRealtime();
         getSharedPreferences("redalarm_native_alarms_v1", MODE_PRIVATE).edit()
                 .putBoolean("ringing:" + id, true).putString("ringing_id", id)
@@ -62,13 +63,16 @@ public final class RedAlarmRingingService extends Service {
         Notification notification = buildNotification(id, config);
         try { startForeground(NOTIFICATION_ID, notification); }
         catch (Throwable e) { android.util.Log.e("RedAlarmNative", "startForeground failed", e); }
-        acquireWakeLock(duration + 15);
-        startAudio(config);
+        RedAlarmUnlockedOverlay.show(this, id, config);
+        acquireWakeLock(duration > 0 ? duration + 15 : 10800);
+        if (config.optBoolean("sound_enabled", true)) startAudio(config);
         if (config.optBoolean("vibrate", false)) startVibration();
-        final int run = session;
-        long remainingDelay = Math.max(1L, ringStartedElapsed + duration * 1000L
-                - android.os.SystemClock.elapsedRealtime());
-        handler.postDelayed(new Runnable() { @Override public void run() { if (run == session) stopAndFinish(); } }, remainingDelay);
+        if (duration > 0) {
+            final int run = session;
+            long remainingDelay = Math.max(1L, ringStartedElapsed + duration * 1000L
+                    - android.os.SystemClock.elapsedRealtime());
+            handler.postDelayed(new Runnable() { @Override public void run() { if (run == session) stopAndFinish(); } }, remainingDelay);
+        }
         return START_NOT_STICKY;
     }
 
@@ -110,9 +114,11 @@ public final class RedAlarmRingingService extends Service {
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setContentIntent(content).setFullScreenIntent(content, true)
-                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Dismiss", dismiss)
-                .addAction(android.R.drawable.ic_popup_reminder, "Snooze", snooze)
-                .setOngoing(true).setAutoCancel(false).setOnlyAlertOnce(true);
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Dismiss", dismiss);
+        if (config.optBoolean("snooze_enabled", true)) {
+            b.addAction(android.R.drawable.ic_popup_reminder, "Snooze", snooze);
+        }
+        b.setOngoing(true).setAutoCancel(false).setOnlyAlertOnce(true);
         Notification n = b.build();
         n.flags |= Notification.FLAG_NO_CLEAR | Notification.FLAG_ONGOING_EVENT;
         return n;
@@ -228,6 +234,7 @@ public final class RedAlarmRingingService extends Service {
         }
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.cancel(NOTIFICATION_ID);
+        RedAlarmUnlockedOverlay.hide(this);
         super.onDestroy();
     }
 }

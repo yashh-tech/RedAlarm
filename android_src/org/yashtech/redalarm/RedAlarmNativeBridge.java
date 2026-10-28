@@ -166,6 +166,7 @@ public final class RedAlarmNativeBridge {
             if (!TextUtils.isEmpty(raw)) {
                 try {
                     JSONObject config = new JSONObject(raw);
+                    if (!config.optBoolean("snooze_enabled", true)) return;
                     int seconds = Math.max(1, Math.min(10800, config.optInt("snooze_sec", 60)));
                     scheduleAlarm(app, alarmId, raw, getStorePath(app),
                             System.currentTimeMillis() + seconds * 1000L, true);
