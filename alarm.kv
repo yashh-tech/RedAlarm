@@ -443,7 +443,7 @@
                     width: dp(1.4)
 
             Label:
-                text: "AUTO-DISMISS IN"
+                text: "AUTO-DISMISS IN" if root.auto_dismiss_enabled else "AUTO-DISMISS OFF"
                 font_size: "13sp"
                 bold: True
                 color: 0.90, 0.60, 0.60, 1
@@ -465,6 +465,8 @@
             pos_hint: {"center_x": 0.5}
             bg_color: 0.16, 0.16, 0.16, 1
             text_color: 1, 1, 1, 1
+            disabled: not root.snooze_enabled
+            opacity: 1 if root.snooze_enabled else 0
             on_release: root.snooze_pressed()
 
         Widget:

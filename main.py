@@ -2156,8 +2156,11 @@ class AlarmEditScreen(Screen):
     days_selected = ListProperty([False] * 7)
     sound_path = StringProperty("")
     sound_name = StringProperty("Default beep")
+    sound_enabled = BooleanProperty(True)
     vibrate = BooleanProperty(False)
     volume = NumericProperty(0.80)
+    snooze_enabled = BooleanProperty(True)
+    auto_dismiss_enabled = BooleanProperty(True)
     auto_dismiss_sec = NumericProperty(5)
     snooze_sec = NumericProperty(300)
     error_message = StringProperty("")
@@ -2202,6 +2205,9 @@ class AlarmEditScreen(Screen):
         if time_popup is not None and getattr(time_popup, "is_open", False):
             time_popup.dismiss()
             return True
+        if getattr(self.ui, "current", "settings") != "settings":
+            self.ui.show_settings()
+            return True
 
         # There is one editor page now: close the keyboard first, otherwise
         # discard this unsaved edit and return to the screen that opened it.
@@ -2234,8 +2240,11 @@ class AlarmEditScreen(Screen):
             self.days_selected = [False] * 7
             self.sound_path = ""
             self.sound_name = "Default beep"
+            self.sound_enabled = True
             self.vibrate = False
             self.volume = 0.80
+            self.snooze_enabled = True
+            self.auto_dismiss_enabled = True
             self.auto_dismiss_sec = 5
             self.snooze_sec = 300
         else:
@@ -2258,7 +2267,10 @@ class AlarmEditScreen(Screen):
                 self.days_selected = (self.days_selected + [False] * 7)[:7]
             self.sound_path = alarm.get("sound_path", "") or ""
             self.sound_name = alarm.get("sound_name") or "Default beep"
+            self.sound_enabled = bool(alarm.get("sound_enabled", True))
             self.vibrate = bool(alarm.get("vibrate", False))
+            self.snooze_enabled = bool(alarm.get("snooze_enabled", True))
+            self.auto_dismiss_enabled = bool(alarm.get("auto_dismiss_enabled", True))
             try:
                 self.volume = max(0.0, min(1.0, float(alarm.get("volume", 0.80))))
             except (TypeError, ValueError):
@@ -2517,14 +2529,15 @@ class AlarmEditScreen(Screen):
         label_text = (alarm.get("label") or "Alarm").strip() or "Alarm"
         time_text = format_time(alarm["hour"], alarm["minute"])
         repeat_text = format_days(alarm.get("days"))
-        volume_text = "{}%".format(int(round(float(alarm.get("volume", 0.80)) * 100)))
+        volume_text = ("{}%".format(int(round(float(alarm.get("volume", 0.80)) * 100)))
+                       if alarm.get("sound_enabled", True) else "Off")
         details = [
-            ("Sound", alarm.get("sound_name") or "Default beep"),
+            ("Sound", (alarm.get("sound_name") or "Default beep") if alarm.get("sound_enabled", True) else "Off"),
             ("Repeat", repeat_text),
             ("Volume", volume_text),
             ("Vibration", "On" if alarm.get("vibrate") else "Off"),
-            ("Auto-dismiss", format_duration(alarm.get("auto_dismiss_sec", 5))),
-            ("Snooze", format_duration(alarm.get("snooze_sec", 60))),
+            ("Auto-dismiss", format_duration(alarm.get("auto_dismiss_sec", 5)) if alarm.get("auto_dismiss_enabled", True) else "Off"),
+            ("Snooze", format_duration(alarm.get("snooze_sec", 60)) if alarm.get("snooze_enabled", True) else "Off"),
         ]
         content = BoxLayout(orientation="vertical", padding=(dp(18), dp(14), dp(18), dp(14)), spacing=dp(8))
         title = Label(text="ALARM SET FOR {}".format(day_label.upper()), color=(156/255, 12/255, 12/255, 1),
@@ -2644,8 +2657,11 @@ class AlarmEditScreen(Screen):
             "sound_path": sound_path,
             "sound_name": sound_name,
             "volume": volume,
+            "sound_enabled": bool(self.sound_enabled),
             "auto_dismiss_sec": dismiss_seconds,
+            "auto_dismiss_enabled": bool(self.auto_dismiss_enabled),
             "snooze_sec": snooze_seconds,
+            "snooze_enabled": bool(self.snooze_enabled),
             "vibrate": bool(self.vibrate),
             "enabled": True,
         })
@@ -2664,6 +2680,8 @@ class AlarmRingScreen(Screen):
     alarm_id = StringProperty("")
     time_text = StringProperty("")
     label_text = StringProperty("")
+    snooze_enabled = BooleanProperty(True)
+    auto_dismiss_enabled = BooleanProperty(True)
     countdown_text = StringProperty("")
 
     def __init__(self, **kwargs):
@@ -2692,6 +2710,8 @@ class AlarmRingScreen(Screen):
         self.alarm_id = alarm["id"]
         self.time_text = format_time(alarm["hour"], alarm["minute"])
         self.label_text = alarm.get("label") or "Alarm"
+        self.snooze_enabled = bool(alarm.get("snooze_enabled", True))
+        self.auto_dismiss_enabled = bool(alarm.get("auto_dismiss_enabled", True))
 
         native_playback = False
         if ANDROID:
@@ -2739,7 +2759,9 @@ class AlarmRingScreen(Screen):
         # On Android the exact-alarm receiver starts a native media-playback
         # foreground service before it asks the Activity to draw this screen.
         # That service keeps audio alive if Kivy's clock pauses on the lock screen.
-        if ANDROID and native_playback:
+        if not bool(alarm.get("sound_enabled", True)):
+            sound = None
+        elif ANDROID and native_playback:
             sound = None
             print("[RedAlarm] ring: native foreground service owns playback")
         else:
@@ -2755,23 +2777,23 @@ class AlarmRingScreen(Screen):
             1, int(alarm.get("auto_dismiss_sec", 5) or 5)
         )
         # Stop audio at the selected duration; the UI grace below must not extend it.
-        if self._sound is not None:
-            self._sound_stop_event = Clock.schedule_once(
-                lambda _dt, ring_session=session: self._stop_ring_sound(ring_session),
-                float(configured_dismiss_seconds),
+        if self.auto_dismiss_enabled:
+            if self._sound is not None:
+                self._sound_stop_event = Clock.schedule_once(
+                    lambda _dt, ring_session=session: self._stop_ring_sound(ring_session),
+                    float(configured_dismiss_seconds),
+                )
+            # Extremely short settings need a startup/visibility grace.
+            dismiss_grace_seconds = 1 if configured_dismiss_seconds <= 3 else 0
+            self._remaining_seconds = configured_dismiss_seconds + dismiss_grace_seconds
+            self._update_countdown_text()
+            self._countdown_event = Clock.schedule_interval(
+                lambda dt: self._tick_countdown(dt, session), 1
             )
-        # Extremely short settings need a startup/visibility grace so Android has
-        # time to display the ringing UI before the activity closes.
-        dismiss_grace_seconds = 1 if configured_dismiss_seconds <= 3 else 0
-        self._remaining_seconds = configured_dismiss_seconds + dismiss_grace_seconds
-        self._update_countdown_text()
-
-        # ONE timer drives both the digits and the auto-dismiss: the tick
-        # that reaches zero is the tick that ends the alarm, so the display
-        # and the real cutoff can never disagree.
-        self._countdown_event = Clock.schedule_interval(
-            lambda dt: self._tick_countdown(dt, session), 1
-        )
+        else:
+            self._remaining_seconds = 0
+            self.countdown_text = "OFF"
+            self._countdown_event = None
 
     def _stop_ring_sound(self, session=None):
         """Stop and release only the ringtone; keep the ring UI/countdown alive."""

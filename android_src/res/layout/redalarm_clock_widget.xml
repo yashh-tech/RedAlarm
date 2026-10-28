@@ -1,26 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/redalarm_clock_widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
+    android:orientation="horizontal"
     android:gravity="center_vertical"
     android:padding="12dp"
+    android:baselineAligned="false"
     android:background="#000000">
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="REDALARM"
-        android:textColor="#9C0C0C"
-        android:textSize="11sp"
-        android:textStyle="bold" />
-    <TextClock
-        android:id="@+id/redalarm_clock_text"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:format12Hour="h:mm"
-        android:format24Hour="HH:mm"
-        android:textColor="#FFFFFF"
-        android:textSize="34sp"
-        android:textStyle="bold" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1.18"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <AnalogClock
+            android:layout_width="54dp"
+            android:layout_height="54dp"
+            android:layout_marginEnd="6dp"
+            android:dial="@drawable/redalarm_widget_dial"
+            android:hand_hour="@drawable/redalarm_widget_hour_hand"
+            android:hand_minute="@drawable/redalarm_widget_minute_hand" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="REDALARM"
+                android:textColor="#E21A2D"
+                android:textSize="9sp"
+                android:textStyle="bold" />
+            <TextClock
+                android:id="@+id/redalarm_clock_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:format12Hour="h:mm a"
+                android:format24Hour="h:mm a"
+                android:includeFontPadding="false"
+                android:textColor="#FFFFFF"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="LIVE CLOCK"
+                android:textColor="#8E8E95"
+                android:textSize="8sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:layout_width="1dp"
+        android:layout_height="52dp"
+        android:layout_marginStart="6dp"
+        android:layout_marginEnd="9dp"
+        android:background="#3B1116" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:gravity="center_vertical"
+        android:orientation="vertical">
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="NEXT ALARM"
+            android:textColor="#E21A2D"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+        <TextView
+            android:id="@+id/redalarm_next_alarm_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="No upcoming alarm"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:maxLines="2"
+            android:ellipsize="end" />
+    </LinearLayout>
 </LinearLayout>
 

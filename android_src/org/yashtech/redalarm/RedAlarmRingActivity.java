@@ -33,11 +33,13 @@ public final class RedAlarmRingActivity extends Activity {
     private final Handler countdownHandler = new Handler(Looper.getMainLooper());
     private TextView countdownValue;
     private int autoDismissSeconds = 5;
+    private boolean autoDismissEnabled = true;
+    private boolean snoozeEnabled = true;
     private long fallbackDeadlineElapsed = 0L;
 
     private final Runnable countdownTick = new Runnable() {
         @Override public void run() {
-            if (countdownValue == null || TextUtils.isEmpty(alarmId)) return;
+            if (!autoDismissEnabled || countdownValue == null || TextUtils.isEmpty(alarmId)) return;
             SharedPreferences prefs = getSharedPreferences("redalarm_native_alarms_v1", MODE_PRIVATE);
             long started = prefs.getLong("ring_started_elapsed:" + alarmId, 0L);
             int duration = Math.max(1, prefs.getInt("ring_duration_sec:" + alarmId, autoDismissSeconds));
@@ -111,6 +113,8 @@ public final class RedAlarmRingActivity extends Activity {
                 if (label.isEmpty()) label = "Alarm";
                 hour = Math.max(0, Math.min(23, config.optInt("hour", 7)));
                 minute = Math.max(0, Math.min(59, config.optInt("minute", 0)));
+                autoDismissEnabled = config.optBoolean("auto_dismiss_enabled", true);
+                snoozeEnabled = config.optBoolean("snooze_enabled", true);
                 autoDismissSeconds = Math.max(1, Math.min(10800, config.optInt("auto_dismiss_sec", 5)));
             }
         } catch (JSONException e) {
@@ -164,7 +168,8 @@ public final class RedAlarmRingActivity extends Activity {
         countdownCard.setBackground(countdownBackground);
 
         TextView countdownTitle = new TextView(this);
-        countdownTitle.setText("AUTO-DISMISS IN");
+        if (autoDismissEnabled) countdownTitle.setText("AUTO-DISMISS IN");
+        else countdownTitle.setText("AUTO-DISMISS OFF");
         countdownTitle.setTextColor(Color.rgb(226, 145, 150));
         countdownTitle.setTextSize(13);
         countdownTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -176,6 +181,7 @@ public final class RedAlarmRingActivity extends Activity {
         countdownValue.setTextSize(39);
         countdownValue.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         countdownValue.setGravity(Gravity.CENTER);
+        countdownValue.setText(autoDismissEnabled ? "00:05" : "OFF");
         countdownCard.addView(countdownValue, new LinearLayout.LayoutParams(-1, dp(46)));
         LinearLayout.LayoutParams countdownParams = new LinearLayout.LayoutParams(-1, dp(78));
         countdownParams.bottomMargin = dp(18);
@@ -185,6 +191,7 @@ public final class RedAlarmRingActivity extends Activity {
         snooze.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { takeAction("snooze"); }
         });
+        snooze.setVisibility(snoozeEnabled ? View.VISIBLE : View.GONE);
         LinearLayout.LayoutParams snoozeParams = new LinearLayout.LayoutParams(-1, dp(62));
         snoozeParams.bottomMargin = dp(14);
         root.addView(snooze, snoozeParams);
@@ -197,13 +204,17 @@ public final class RedAlarmRingActivity extends Activity {
         setContentView(root);
 
         SharedPreferences prefs = getSharedPreferences("redalarm_native_alarms_v1", MODE_PRIVATE);
-        long started = prefs.getLong("ring_started_elapsed:" + alarmId, 0L);
-        int duration = Math.max(1, prefs.getInt("ring_duration_sec:" + alarmId, autoDismissSeconds));
-        fallbackDeadlineElapsed = started > 0L
-                ? started + duration * 1000L
-                : SystemClock.elapsedRealtime() + autoDismissSeconds * 1000L;
+        if (autoDismissEnabled) {
+            long started = prefs.getLong("ring_started_elapsed:" + alarmId, 0L);
+            int duration = Math.max(1, prefs.getInt("ring_duration_sec:" + alarmId, autoDismissSeconds));
+            fallbackDeadlineElapsed = started > 0L
+                    ? started + duration * 1000L
+                    : SystemClock.elapsedRealtime() + autoDismissSeconds * 1000L;
+        } else {
+            fallbackDeadlineElapsed = 0L;
+        }
         countdownHandler.removeCallbacks(countdownTick);
-        countdownHandler.post(countdownTick);
+        if (autoDismissEnabled) countdownHandler.post(countdownTick);
     }
 
     private Button makeButton(String title, int color) {

@@ -173,6 +173,22 @@ def main() -> int:
     if "_cancel_motion()" not in source_for_node(module_text, wheel_move) or "_cancel_motion()" not in source_for_node(module_text, wheel_up):
         fail("Spinner lost-grab recovery is missing")
     print("PASS: spinner tick load is deferred and stale grabs are recovered")
+    physics_markers = (
+        "self.fling_velocity_window = 0.12",
+        "self.min_fling_velocity = 1.15",
+        "self.max_fling_velocity = 28.0",
+        "math.exp(-friction * dt)",
+        "self._record_touch_sample(now)",
+        "self._release_velocity(now)",
+        "class SnoozeIcon(Widget):",
+        "class AutoDismissIcon(Widget):",
+        "icon=SnoozeIcon",
+        "icon=AutoDismissIcon",
+    )
+    for marker in physics_markers:
+        if marker not in module_text:
+            fail("Fling physics or setting icon wiring missing: " + marker)
+    print("PASS: recent-velocity fling, exponential friction, snapping, and setting icons")
 
     if any(marker not in kv_text for marker in ("<HomeScreen>:", "<AlarmEditScreen>:", "<AlarmRingScreen>:")):
         fail("KV screen definitions are incomplete")

@@ -24,7 +24,6 @@ def after_apk_build(toolchain):
         ("receiver", "org.yashtech.redalarm.RedAlarmAlarmReceiver"),
         ("service", "org.yashtech.redalarm.RedAlarmRingingService"),
         ("receiver", "org.yashtech.redalarm.RedAlarmClockWidgetProvider"),
-        ("receiver", "org.yashtech.redalarm.RedAlarmNextAlarmWidgetProvider"),
     ]
     for tag, name in owned:
         pattern = re.compile(r"\s*<" + tag + r"\b(?=[^>]*android:name=[\"']" + re.escape(name) + r"[\"'])[^>]*(?:/>|>.*?</" + tag + r"\s*>)", re.DOTALL)
@@ -56,13 +55,6 @@ def after_apk_build(toolchain):
                 <action android:name="org.yashtech.redalarm.UPDATE_WIDGETS" />
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/redalarm_clock_widget_info" />
-        </receiver>
-        <receiver android:name="org.yashtech.redalarm.RedAlarmNextAlarmWidgetProvider" android:enabled="true" android:exported="true">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="org.yashtech.redalarm.UPDATE_WIDGETS" />
-            </intent-filter>
-            <meta-data android:name="android.appwidget.provider" android:resource="@xml/redalarm_next_alarm_widget_info" />
         </receiver>
 """
     text = text[:app.end()] + components + text[app.end():]
