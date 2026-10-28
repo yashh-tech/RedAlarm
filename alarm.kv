@@ -381,16 +381,18 @@
             text_color: 1, 1, 1, 1
             on_release: root.open_overlay_settings()
 
-        ScrollView:
-            do_scroll_x: False
-            bar_width: 0
-
-            BoxLayout:
-                id: alarms_box
-                orientation: "vertical"
-                size_hint_y: None
-                height: self.minimum_height
-                spacing: "12dp"
+        AnchorLayout:
+            size_hint_y: None
+            height: dp(36)
+            anchor_x: "right"
+            HomeButton:
+                text: "CANCEL" if root.selection_mode else "SELECT"
+                font_size: "11sp"
+                size_hint: None, None
+                size: dp(96), dp(34)
+                bg_color: (0.10, 0.035, 0.045, 1) if root.selection_mode else (0.06, 0.06, 0.07, 1)
+                text_color: COL_TEXT
+                on_release: root.cancel_selection() if root.selection_mode else root.start_selection()
 
         BoxLayout:
             orientation: "vertical"
@@ -398,7 +400,6 @@
             height: root.selection_toolbar_height
             opacity: root.selection_toolbar_opacity
             disabled: not root.selection_mode
-            orientation: "vertical"
             spacing: dp(5)
             padding: dp(10), dp(6), dp(10), 0
             canvas.before:
@@ -426,19 +427,11 @@
                 size_hint_y: None
                 height: dp(45)
                 HomeButton:
-                    text: "DESELECT" if root.all_selected else "SELECT ALL"
+                    text: "UNSELECT ALL" if root.all_selected else "SELECT ALL"
                     font_size: "10sp"
                     bg_color: (0.10, 0.035, 0.045, 1)
                     text_color: COL_TEXT
                     on_release: root.select_all_selected()
-                HomeButton:
-                    text: "Copy"
-                    font_size: "10sp"
-                    bg_color: (0.07, 0.07, 0.08, 1)
-                    text_color: COL_TEXT
-                    disabled: root.selected_count == 0
-                    opacity: 0.45 if root.selected_count == 0 else 1
-                    on_release: root.copy_selected()
                 HomeButton:
                     text: "DELETE"
                     font_size: "10sp"
@@ -448,11 +441,24 @@
                     opacity: 0.45 if root.selected_count == 0 else 1
                     on_release: root.confirm_delete_selected()
                 HomeButton:
-                    text: "CANCEL"
+                    text: "COPY"
                     font_size: "10sp"
-                    bg_color: (0.09, 0.09, 0.10, 1)
+                    bg_color: (0.07, 0.07, 0.08, 1)
                     text_color: COL_TEXT
-                    on_release: root.cancel_selection()
+                    disabled: root.selected_count == 0
+                    opacity: 0.45 if root.selected_count == 0 else 1
+                    on_release: root.copy_selected()
+
+        ScrollView:
+            do_scroll_x: False
+            bar_width: 0
+
+            BoxLayout:
+                id: alarms_box
+                orientation: "vertical"
+                size_hint_y: None
+                height: self.minimum_height
+                spacing: "12dp"
 
 
 # --------------------------------------------------------------------

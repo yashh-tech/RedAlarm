@@ -212,7 +212,12 @@ def main() -> int:
     for marker in ("def begin_selection(", "def toggle_selection(", "def select_all_selected(", "def copy_selected(", "def confirm_delete_selected("):
         if marker not in main_text:
             fail("Alarm-list multi-select action is missing: " + marker)
-    if any(marker not in kv_text for marker in ("AlarmSelectionIndicator:", 'text: "Copy"', "root.copy_selected()", "root.confirm_delete_selected()")):
+    if (
+        "AlarmSelectionIndicator:" not in kv_text
+        or not any(marker in kv_text for marker in ('text: "Copy"', 'text: "COPY"'))
+        or "root.copy_selected()" not in kv_text
+        or "root.confirm_delete_selected()" not in kv_text
+    ):
         fail("Alarm-list long-press toolbar wiring is incomplete")
     if "MAX_WORDS = 25" not in module_text or "Enter label (optional)" not in module_text:
         fail("Editable, 25-word alarm-label input is missing")
@@ -246,6 +251,10 @@ def main() -> int:
             and 'LABEL_WHITE = (249 / 255.0, 249 / 255.0, 249 / 255.0, 1.0)' in module_text)
     ):
         fail("Label input disabled text must remain readable")
+    if "def _get_line_options(self):" not in module_text or 'options["color"] = LABEL_WHITE' not in module_text:
+        fail("Alarm label must force #F9F9F9 on Kivy's rendered text lines")
+    if 'text: "CANCEL" if root.selection_mode else "SELECT"' not in kv_text or "def start_selection(self):" not in main_text:
+        fail("Alarm list must provide an explicit Select control that opens empty selection mode")
     print("PASS: long-press checkboxes/action bar, individual delete confirmation, and bulk actions")
     print("PASS: readable label text, text keyboard, suggestions, and 25-word cap")
     if 'size: dp(24), dp(24)' not in kv_text or 'anchor_y: "center"' not in kv_text:

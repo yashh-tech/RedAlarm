@@ -844,10 +844,20 @@ class AlarmLabelInput(TextInput):
         Clock.schedule_once(self._apply_readable_colors, 0)
         Clock.schedule_once(self._apply_readable_colors, 0.15)
 
+    def _get_line_options(self):
+        # Kivy TextInput rasterizes each text line into cached Labels. Force
+        # the line label's own color too, instead of relying only on the
+        # TextInput property (which was still rendered dark on some devices).
+        options = super()._get_line_options()
+        options["color"] = LABEL_WHITE
+        return options
+
     def _apply_readable_colors(self, *_):
         self.foreground_color = LABEL_WHITE
         self.disabled_foreground_color = LABEL_WHITE
         self.hint_text_color = (0.82, 0.82, 0.85, 1)
+        # Re-rasterize existing text after restoring the exact requested color.
+        self._trigger_refresh_text()
 
     def insert_text(self, substring, from_undo=False):
         if from_undo:
@@ -2280,13 +2290,18 @@ class SoundSelectionPage(BoxLayout):
         self._add_choice("Default beep", "", app.default_ringtone_path)
         seen_paths = {str(app.default_ringtone_path)}
         try:
-            builtin_choices = self.editor.builtin_sound_choices()
-            self.note.text = "Tap PREVIEW to listen. Using a sound is a separate action."
+            builtin_choices = list(self.editor.builtin_sound_choices() or [])
+            self.note.text = (
+                "Built-in sounds ready — PREVIEW uses 100% player gain."
+                if builtin_choices else
+                "Default beep remains available. Try BROWSE LOCAL MUSIC for other sounds."
+            )
         except Exception as exc:
-            # Optional tone discovery must never stop the sound page opening.
+            # Sound discovery must never stop the chooser. Individual tone
+            # generation failures are isolated by ensure_builtin_ringtones().
             print("[RedAlarm] could not load built-in ringtone list:", exc)
             builtin_choices = []
-            self.note.text = "Built-in tones unavailable. Try BROWSE LOCAL MUSIC."
+            self.note.text = "Default beep remains available. Try BROWSE LOCAL MUSIC for other sounds."
         for name, path in builtin_choices:
             full_path = str(path or "")
             if not full_path or full_path in seen_paths:

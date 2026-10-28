@@ -1067,8 +1067,13 @@ def ensure_default_ringtone(cache_dir):
     having to open a file picker."""
     os.makedirs(cache_dir, exist_ok=True)
     path = os.path.join(cache_dir, "default_alarm.wav")
-    if os.path.exists(path):
-        return path
+    # A stale/empty WAV can exist after an interrupted first run. Only trust a
+    # complete file; otherwise recreate it so the built-in sound remains usable.
+    try:
+        if os.path.isfile(path) and os.path.getsize(path) > 44:
+            return path
+    except OSError:
+        pass
 
     import wave
     import struct
@@ -1100,11 +1105,57 @@ def ensure_default_ringtone(cache_dir):
 
 
 def ensure_builtin_ringtones(cache_dir):
-    """Create five small, licence-free built-in alarm tones on first use."""
-    os.makedirs(cache_dir, exist_ok=True)
+    """Generate available licence-free tones independently; one failure won't hide the rest."""
+    import tempfile
     import wave
     import struct
-    choices = [("Classic Beep", ensure_default_ringtone(cache_dir))]
+
+    # Prefer persistent app storage. Fall back to the platform temp directory
+    # if an OEM/device refuses a write in the first location.
+    dirs = []
+    if cache_dir:
+        dirs.append(os.fspath(cache_dir))
+    dirs.append(os.path.join(tempfile.gettempdir(), "redalarm_builtin_tones"))
+    work_dir = None
+    for directory in dict.fromkeys(dirs):
+        probe = os.path.join(directory, ".redalarm_write_probe")
+        try:
+            os.makedirs(directory, exist_ok=True)
+            with open(probe, "ab"):
+                pass
+            try:
+                os.remove(probe)
+            except OSError:
+                pass
+            work_dir = directory
+            break
+        except Exception as exc:
+            print("[RedAlarm] ringtone cache is not writable:", directory, exc)
+            try:
+                if os.path.exists(probe):
+                    os.remove(probe)
+            except OSError:
+                pass
+    if work_dir is None:
+        print("[RedAlarm] no writable ringtone cache; keeping the editor open")
+        return []
+
+    def usable(path):
+        try:
+            return os.path.isfile(path) and os.path.getsize(path) > 44
+        except OSError:
+            return False
+
+    choices = []
+    try:
+        default_path = ensure_default_ringtone(work_dir)
+        if usable(default_path):
+            choices.append(("Classic Beep", default_path))
+    except Exception as exc:
+        print("[RedAlarm] default built-in tone generation failed:", exc)
+
+    # Versioned filenames force regeneration of older, very quiet previews.
+    # All tones are mono PCM WAVs with a soft attack/release and safe amplitude.
     patterns = [
         ("Pulse", [(740, .12), (0, .08), (880, .18), (0, .10), (740, .12)]),
         ("Double Alert", [(1040, .12), (0, .10), (1040, .12), (0, .22), (1310, .22)]),
@@ -1113,25 +1164,33 @@ def ensure_builtin_ringtones(cache_dir):
     ]
     rate = 22050
     for name, sequence in patterns:
-        path = os.path.join(cache_dir, "builtin_{}.wav".format(name.lower().replace(" ", "_")))
-        if not os.path.isfile(path):
-            samples = []
-            for frequency, seconds in sequence:
-                count = int(rate * seconds)
-                if frequency <= 0:
-                    samples.extend([0] * count)
-                    continue
-                for index in range(count):
-                    t = index / float(rate)
-                    envelope = min(1.0, t * 45.0) * min(1.0, (seconds - t) * 18.0)
-                    sample = int(0.48 * envelope * 32767 * math.sin(2 * math.pi * frequency * t))
-                    samples.append(max(-32768, min(32767, sample)))
-            with wave.open(path, "wb") as wav:
-                wav.setnchannels(1)
-                wav.setsampwidth(2)
-                wav.setframerate(rate)
-                wav.writeframes(b"".join(struct.pack("<h", value) for value in samples))
-        choices.append((name, path))
+        filename = "builtin_v2_{}.wav".format(name.lower().replace(" ", "_"))
+        path = os.path.join(work_dir, filename)
+        try:
+            if not usable(path):
+                samples = []
+                for frequency, seconds in sequence:
+                    count = max(1, int(rate * seconds))
+                    if frequency <= 0:
+                        samples.extend([0] * count)
+                        continue
+                    for index in range(count):
+                        t = index / float(rate)
+                        envelope = min(1.0, t * 45.0) * min(1.0, (seconds - t) * 18.0)
+                        sample = int(0.78 * envelope * 32767 * math.sin(2 * math.pi * frequency * t))
+                        samples.append(max(-32768, min(32767, sample)))
+                with wave.open(path, "wb") as wav:
+                    wav.setnchannels(1)
+                    wav.setsampwidth(2)
+                    wav.setframerate(rate)
+                    wav.writeframes(b"".join(struct.pack("<h", value) for value in samples))
+            if usable(path):
+                choices.append((name, path))
+            else:
+                print("[RedAlarm] built-in tone file is incomplete:", path)
+        except Exception as exc:
+            print("[RedAlarm] skipping only this built-in tone:", name, exc)
+
     return choices
 
 
@@ -1821,7 +1880,7 @@ class AlarmListScreen(Screen):
                 row.selection_mode = self.selection_mode
                 row.selected = row.alarm_id in selected
 
-    def _apply_selection_state(self, alarm_ids):
+    def _apply_selection_state(self, alarm_ids, keep_mode=False):
         app = App.get_running_app()
         available = {str(item.get("id", "")) for item in app.store.all()}
         unique = []
@@ -1831,18 +1890,26 @@ class AlarmListScreen(Screen):
                 unique.append(alarm_id)
         was_selection_mode = self.selection_mode
         self.selected_alarm_ids = unique
-        self.selection_mode = bool(unique)
+        # Selection mode must remain open with zero checked alarms so the user
+        # can tap SELECT ALL, and can uncheck every item without the toolbar vanishing.
+        self.selection_mode = bool(unique) or bool(keep_mode)
         self.selected_count = len(unique)
         self.all_selected = bool(available) and len(unique) == len(available)
         if was_selection_mode != self.selection_mode:
             self._animate_selection_toolbar(self.selection_mode)
         self._sync_selection_visuals()
 
+    def start_selection(self):
+        """Show checkboxes and bulk actions before any alarm has been selected."""
+        if self.selection_mode:
+            return
+        self._apply_selection_state([], keep_mode=True)
+
     def begin_selection(self, alarm_id):
         ids = list(self.selected_alarm_ids) if self.selection_mode else []
         if str(alarm_id) not in ids:
             ids.append(str(alarm_id))
-        self._apply_selection_state(ids)
+        self._apply_selection_state(ids, keep_mode=True)
 
     def toggle_selection(self, alarm_id):
         ids = list(self.selected_alarm_ids)
@@ -1851,17 +1918,14 @@ class AlarmListScreen(Screen):
             ids.remove(alarm_id)
         else:
             ids.append(alarm_id)
-        if not ids:
-            self.cancel_selection()
-        else:
-            self._apply_selection_state(ids)
+        self._apply_selection_state(ids, keep_mode=True)
 
     def select_all_selected(self):
         ids = [str(item.get("id", "")) for item in App.get_running_app().store.all()]
-        if not ids or self.all_selected:
-            self.cancel_selection()
+        if self.all_selected:
+            self._apply_selection_state([], keep_mode=True)
         else:
-            self._apply_selection_state(ids)
+            self._apply_selection_state(ids, keep_mode=True)
 
     def cancel_selection(self):
         was_selection_mode = self.selection_mode
@@ -2000,8 +2064,7 @@ class AlarmListScreen(Screen):
         alarms = app.store.all()
         valid_ids = {str(item.get("id", "")) for item in alarms}
         self.selected_alarm_ids = [item_id for item_id in self.selected_alarm_ids if item_id in valid_ids]
-        if not self.selected_alarm_ids:
-            self.selection_mode = False
+        # Do not collapse explicit selection mode when the selected set is empty.
         self.selected_count = len(self.selected_alarm_ids)
         self.all_selected = bool(alarms) and self.selected_count == len(alarms)
         if not alarms:

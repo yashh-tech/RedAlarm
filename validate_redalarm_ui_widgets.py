@@ -39,6 +39,8 @@ def main() -> int:
         "class AutoDismissIcon(Widget):",
         "class SoundSelectionPage(BoxLayout):",
         "foreground_color=(1, 1, 1, 1)",
+        "def _get_line_options(self):",
+        "options[\"color\"] = LABEL_WHITE",
         "USE SELECTED SOUND",
         "self.editor.preview_sound(path=p, duration=8.0)",
     ):
@@ -50,6 +52,12 @@ def main() -> int:
         '"auto_dismiss_enabled": bool(self.auto_dismiss_enabled)',
     ):
         require(marker in main_source, "setting persistence marker missing: " + marker)
+    require("def start_selection(self):" in main_source,
+            "explicit Select action must open selection mode with zero selected alarms")
+    require('text: "CANCEL" if root.selection_mode else "SELECT"' in (ROOT / "alarm.kv").read_text(encoding="utf-8"),
+            "alarm-list SELECT/CANCEL control is missing")
+    for tone in ('("Pulse",', '("Double Alert",', '("Rising Tone",', '("Digital",'):
+        require(tone in main_source, "built-in tone missing: " + tone)
     print("PASS: Python syntax, fling settings, editor navigation, and persisted toggles")
     for marker in ("def _animate_selection_toolbar", "selection_reveal = NumericProperty",
                    "neon_glow = NumericProperty", "def copy_selected", "def confirm_delete_selected"):
