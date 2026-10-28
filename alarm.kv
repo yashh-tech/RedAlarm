@@ -23,7 +23,12 @@
         RoundedRectangle:
             pos: self.pos
             size: self.size
-            radius: [dp(14)]
+            radius: [dp(18)]
+        Color:
+            rgba: (0.72, 0.025, 0.055, 0.68)
+        Line:
+            rounded_rectangle: (self.x, self.y, self.width, self.height, dp(18))
+            width: dp(1.0)
 
 
 <IOSToggle>:
@@ -54,70 +59,92 @@
         Rectangle:
             pos: self.pos
             size: self.size
-        # subtle red glow behind the clock
+        # Corner flares keep the black surface dimensional without image assets.
         Color:
-            rgba: 0.30, 0.05, 0.06, 0.40
+            rgba: 0.28, 0.008, 0.025, 0.38
         Ellipse:
-            pos: self.center_x - self.width * 0.6, self.height * 0.55 - self.width * 0.6
-            size: self.width * 1.2, self.width * 1.2
+            pos: self.x - self.width * 0.54, self.top - self.height * 0.38
+            size: self.width * 0.94, self.width * 0.94
+        Color:
+            rgba: 0.22, 0.005, 0.02, 0.30
+        Ellipse:
+            pos: self.right - self.width * 0.42, self.y - self.width * 0.32
+            size: self.width * 0.76, self.width * 0.76
 
     BoxLayout:
         orientation: "vertical"
-        padding: "24dp", "44dp", "24dp", "30dp"
-        spacing: "10dp"
+        padding: dp(22), dp(22), dp(22), dp(20)
+        spacing: dp(8)
 
-        # ---------- TITLE ----------
-        Label:
-            text: "[color=d11a21][b]RED[/b][/color] [b]ALARM[/b]"
-            markup: True
-            font_size: "34sp"
-            color: COL_TEXT
+        BoxLayout:
+            orientation: "horizontal"
             size_hint_y: None
-            height: "50dp"
+            height: dp(44)
+            spacing: dp(8)
+            Label:
+                text: "◴"
+                color: 1, 0.10, 0.17, 1
+                font_size: "38sp"
+                size_hint_x: None
+                width: dp(46)
+            Label:
+                text: "[color=#ff2436][b]RED[/b][/color] [color=#f7f7fa][b]ALARM[/b][/color]"
+                markup: True
+                halign: "left"
+                valign: "middle"
+                text_size: self.size
+                font_size: "29sp"
 
         Label:
-            text: "build to annoy you"
-            color: COL_SUBTEXT
-            font_size: "13sp"
+            text: "B U I L D   T O   A N N O Y   Y O U"
+            color: (0.56, 0.56, 0.60, 1)
+            font_size: "10sp"
             size_hint_y: None
-            height: "18dp"
+            height: dp(19)
 
-        # ---------- CLOCK ----------
         AnalogClock:
             size_hint_y: 1
 
         Label:
-            text: root.date_text
+            text: "[color=#ff2436]▦[/color]   " + root.date_text
+            markup: True
             font_size: "15sp"
-            color: COL_SUBTEXT
+            color: COL_TEXT
             size_hint_y: None
-            height: "22dp"
+            height: dp(24)
 
-        Label:
-            text: root.next_alarm_text
-            font_size: "14sp"
-            bold: True
-            color: COL_RED
+        AnchorLayout:
             size_hint_y: None
-            height: "20dp"
+            height: dp(42)
+            HomeButton:
+                text: "◉   " + root.next_alarm_text
+                font_size: "12sp"
+                size_hint: (0.90, None)
+                height: dp(39)
+                bg_color: (0.075, 0.018, 0.024, 1)
+                text_color: (1, 0.20, 0.28, 1)
 
-        # ---------- BUTTONS ----------
+        Widget:
+            size_hint_y: None
+            height: dp(4)
+
         HomeButton:
-            text: "Check Alarms"
+            text: "☷     CHECK ALARMS      ›"
             size_hint_y: None
-            height: "54dp"
-            bg_color: COL_CARD
+            height: dp(60)
+            bg_color: (0.055, 0.055, 0.063, 1)
             text_color: COL_TEXT
+            font_size: "16sp"
             on_release: root.go_alarms()
 
         HomeButton:
-            text: "Set New Alarm"
+            text: "＋     SET NEW ALARM      ›"
             size_hint_y: None
-            height: "54dp"
-            bg_color: COL_RED
+            height: dp(60)
+            bg_color: (0.70, 0.012, 0.055, 1)
             text_color: 1, 1, 1, 1
+            font_size: "16sp"
             on_release: root.go_new_alarm()
-
 
 # --------------------------------------------------------------------
 #  Screen 2 - Alarm list
@@ -138,16 +165,28 @@
     Label:
         text: root.sub_text
         color: COL_TEXT if root.primary_label else COL_SUBTEXT
-        font_size: "13sp"
+        font_size: "12sp"
         halign: "left"
         valign: "middle"
         text_size: self.size
+        size_hint_y: None
+        height: dp(17)
+    Label:
+        text: root.days_text
+        markup: True
+        color: COL_SUBTEXT
+        font_size: "9sp"
+        halign: "left"
+        valign: "middle"
+        text_size: self.size
+        size_hint_y: None
+        height: dp(15)
 
 
 <AlarmRow>:
     orientation: "horizontal"
     size_hint_y: None
-    height: "76dp"
+    height: "88dp"
     padding: "14dp", "8dp", "10dp", "8dp"
     spacing: "8dp"
 
@@ -157,17 +196,27 @@
         RoundedRectangle:
             pos: self.pos
             size: self.size
-            radius: [dp(16)]
+            radius: [dp(18)]
         Color:
-            rgba: COL_RED if root.selected else (0, 0, 0, 0)
+            rgba: (0.65, 0.015, 0.045, 0.14 + 0.20 * root.neon_glow)
         Line:
-            rounded_rectangle: (self.x, self.y, self.width, self.height, dp(16))
-            width: dp(1.0)
+            rounded_rectangle: (self.x, self.y, self.width, self.height, dp(18))
+            width: dp(4)
+        Color:
+            rgba: (0.70, 0.025, 0.055, 0.50 + 0.50 * root.neon_glow)
+        Line:
+            rounded_rectangle: (self.x, self.y, self.width, self.height, dp(18))
+            width: dp(1.0 + 0.7 * root.neon_glow)
+        Color:
+            rgba: (1, 0.05, 0.14, 0.18 + 0.82 * root.neon_glow)
+        Line:
+            points: (self.x + dp(2), self.y + dp(15), self.x + dp(2), self.top - dp(15))
+            width: dp(2.5)
 
     AnchorLayout:
         size_hint: None, 1
-        width: dp(30) if root.selection_mode else 0
-        opacity: 1 if root.selection_mode else 0
+        width: dp(30) * root.selection_reveal
+        opacity: root.selection_reveal
         disabled: not root.selection_mode
         anchor_x: "center"
         anchor_y: "center"
@@ -184,6 +233,7 @@
         time_text: root.time_text
         sub_text: root.sub_text
         primary_label: root.label_is_primary
+        days_text: root.days_text
         dim: not root.enabled
 
     Button:
@@ -242,8 +292,8 @@
                 on_release: root.go_home()
 
             Label:
-                text: "Alarms"
-                font_size: "27sp"
+                text: (str(root.selected_count) + " SELECTED") if root.selection_mode else "Alarms"
+                font_size: "19sp" if root.selection_mode else "27sp"
                 bold: True
                 color: COL_TEXT
                 size_hint: None, None
@@ -323,55 +373,66 @@
                 spacing: "12dp"
 
         BoxLayout:
-            orientation: "horizontal"
+            orientation: "vertical"
             size_hint_y: None
-            height: dp(62) if root.selection_mode else 0
-            opacity: 1 if root.selection_mode else 0
+            height: root.selection_toolbar_height
+            opacity: root.selection_toolbar_opacity
             disabled: not root.selection_mode
-            spacing: dp(10)
-            padding: 0, dp(6), 0, 0
+            orientation: "vertical"
+            spacing: dp(5)
+            padding: dp(10), dp(6), dp(10), 0
             canvas.before:
                 Color:
-                    rgba: (0.045, 0.045, 0.05, 1)
-                Rectangle:
+                    rgba: (0.028, 0.028, 0.034, 0.98)
+                RoundedRectangle:
                     pos: self.pos
                     size: self.size
+                    radius: [dp(16)]
                 Color:
-                    rgba: (0.20, 0.20, 0.22, 1)
+                    rgba: (0.72, 0.025, 0.055, 0.85)
                 Line:
-                    points: self.x, self.top, self.right, self.top
-                    width: dp(0.8)
-
-            HomeButton:
-                text: "Deselect All" if root.all_selected else "Select All"
-                font_size: "12sp"
+                    rounded_rectangle: (self.x, self.y, self.width, self.height, dp(16))
+                    width: dp(1)
+            Label:
+                text: str(root.selected_count) + " ALARM" + ("S" if root.selected_count != 1 else "") + " SELECTED"
+                color: (1, 0.24, 0.32, 1)
+                bold: True
+                font_size: "10sp"
                 size_hint_y: None
-                height: dp(48)
-                bg_color: (0.11, 0.11, 0.12, 1)
-                text_color: COL_TEXT
-                on_release: root.select_all_selected()
-
-            HomeButton:
-                text: "Copy"
-                font_size: "12sp"
+                height: dp(18)
+            BoxLayout:
+                orientation: "horizontal"
+                spacing: dp(6)
                 size_hint_y: None
-                height: dp(48)
-                bg_color: (0.11, 0.11, 0.12, 1)
-                text_color: COL_TEXT
-                disabled: root.selected_count == 0
-                opacity: 0.48 if root.selected_count == 0 else 1
-                on_release: root.copy_selected()
-
-            HomeButton:
-                text: "Delete"
-                font_size: "12sp"
-                size_hint_y: None
-                height: dp(48)
-                bg_color: COL_RED
-                text_color: 1, 1, 1, 1
-                disabled: root.selected_count == 0
-                opacity: 0.48 if root.selected_count == 0 else 1
-                on_release: root.confirm_delete_selected()
+                height: dp(45)
+                HomeButton:
+                    text: "DESELECT" if root.all_selected else "SELECT ALL"
+                    font_size: "10sp"
+                    bg_color: (0.10, 0.035, 0.045, 1)
+                    text_color: COL_TEXT
+                    on_release: root.select_all_selected()
+                HomeButton:
+                    text: "Copy"
+                    font_size: "10sp"
+                    bg_color: (0.07, 0.07, 0.08, 1)
+                    text_color: COL_TEXT
+                    disabled: root.selected_count == 0
+                    opacity: 0.45 if root.selected_count == 0 else 1
+                    on_release: root.copy_selected()
+                HomeButton:
+                    text: "DELETE"
+                    font_size: "10sp"
+                    bg_color: (0.68, 0.012, 0.05, 1)
+                    text_color: 1, 1, 1, 1
+                    disabled: root.selected_count == 0
+                    opacity: 0.45 if root.selected_count == 0 else 1
+                    on_release: root.confirm_delete_selected()
+                HomeButton:
+                    text: "CANCEL"
+                    font_size: "10sp"
+                    bg_color: (0.09, 0.09, 0.10, 1)
+                    text_color: COL_TEXT
+                    on_release: root.cancel_selection()
 
 
 # --------------------------------------------------------------------

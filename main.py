@@ -1508,6 +1508,7 @@ class AlarmInfoButton(ButtonBehavior, BoxLayout):
     sub_text = StringProperty("")
     primary_label = BooleanProperty(False)
     dim = BooleanProperty(False)
+    days_text = StringProperty("")
 
     def on_release(self):
         if self.row is not None:
@@ -1592,11 +1593,15 @@ class AlarmRow(BoxLayout):
     alarm_id = StringProperty("")
     time_text = StringProperty("")
     sub_text = StringProperty("")
+    days_text = StringProperty("")
     label_is_primary = BooleanProperty(False)
     enabled = BooleanProperty(True)
     list_screen = ObjectProperty(None)
     selection_mode = BooleanProperty(False)
     selected = BooleanProperty(False)
+    selection_reveal = NumericProperty(0.0)
+    neon_glow = NumericProperty(0.0)
+    days_text = StringProperty("")
     LONG_PRESS_SECONDS = 0.55
 
     def __init__(self, **kwargs):
@@ -1605,6 +1610,16 @@ class AlarmRow(BoxLayout):
         self._press_touch = None
         self._press_origin = None
         self._long_press_triggered = False
+
+    def on_selection_mode(self, _instance, active):
+        Animation.cancel_all(self, "selection_reveal")
+        Animation(selection_reveal=1.0 if active else 0.0, duration=0.20,
+                  t="out_quad").start(self)
+
+    def on_selected(self, _instance, selected):
+        Animation.cancel_all(self, "neon_glow")
+        target = 1.0 if selected else 0.0
+        Animation(neon_glow=target, duration=0.24, t="out_quad").start(self)
 
     def release_child_touch(self):
         event, self._long_press_event = self._long_press_event, None
@@ -1699,6 +1714,16 @@ class AlarmListScreen(Screen):
     battery_ok = BooleanProperty(True)
     overlay_ok = BooleanProperty(True)
     fsi_ok = BooleanProperty(True)
+    selection_toolbar_height = NumericProperty(0.0)
+    selection_toolbar_opacity = NumericProperty(0.0)
+
+    def _animate_selection_toolbar(self, visible):
+        Animation.cancel_all(self, "selection_toolbar_height", "selection_toolbar_opacity")
+        Animation(
+            selection_toolbar_height=dp(104) if visible else 0.0,
+            selection_toolbar_opacity=1.0 if visible else 0.0,
+            duration=0.22, t="out_quad",
+        ).start(self)
 
     def _sync_selection_visuals(self):
         box = self.ids.get("alarms_box") if hasattr(self, "ids") else None
@@ -1718,10 +1743,13 @@ class AlarmListScreen(Screen):
             alarm_id = str(alarm_id)
             if alarm_id in available and alarm_id not in unique:
                 unique.append(alarm_id)
+        was_selection_mode = self.selection_mode
         self.selected_alarm_ids = unique
         self.selection_mode = bool(unique)
         self.selected_count = len(unique)
         self.all_selected = bool(available) and len(unique) == len(available)
+        if was_selection_mode != self.selection_mode:
+            self._animate_selection_toolbar(self.selection_mode)
         self._sync_selection_visuals()
 
     def begin_selection(self, alarm_id):
@@ -1750,10 +1778,13 @@ class AlarmListScreen(Screen):
             self._apply_selection_state(ids)
 
     def cancel_selection(self):
+        was_selection_mode = self.selection_mode
         self.selected_alarm_ids = []
         self.selection_mode = False
         self.selected_count = 0
         self.all_selected = False
+        if was_selection_mode:
+            self._animate_selection_toolbar(False)
         self._sync_selection_visuals()
 
     def copy_selected(self):
@@ -1902,8 +1933,16 @@ class AlarmListScreen(Screen):
             row.time_text = format_time(alarm["hour"], alarm["minute"])
             label = alarm.get("label") or ""
             days_str = format_days(alarm.get("days"))
-            row.sub_text = label if label else days_str
+            row.sub_text = label if label else ("Repeats weekly" if any(alarm.get("days") or []) else "One-time alarm")
             row.label_is_primary = bool(label)
+            days = list(alarm.get("days") or [])
+            short_days = ("M", "T", "W", "T", "F", "S", "S")
+            row.days_text = "  ".join(
+                "[color=#ff2938][b]●{}[/b][/color]".format(day)
+                if index < len(days) and bool(days[index])
+                else "[color=#48484f]●{}[/color]".format(day)
+                for index, day in enumerate(short_days)
+            ) if any(days) else "[color=#85858d]ONCE[/color]"
             row.enabled = bool(alarm.get("enabled", True))
             row.selection_mode = self.selection_mode
             row.selected = row.alarm_id in self.selected_alarm_ids
@@ -2158,7 +2197,7 @@ class AlarmEditScreen(Screen):
     sound_name = StringProperty("Default beep")
     sound_enabled = BooleanProperty(True)
     vibrate = BooleanProperty(False)
-    volume = NumericProperty(0.80)
+    volume = NumericProperty(1.0)
     snooze_enabled = BooleanProperty(True)
     auto_dismiss_enabled = BooleanProperty(True)
     auto_dismiss_sec = NumericProperty(5)
@@ -2169,6 +2208,10 @@ class AlarmEditScreen(Screen):
         super().__init__(**kwargs)
         self.time_state = {"hour": 7, "minute": 16, "ampm": "AM", "label": ""}
         self._return_screen = "home"
+        self._sound_candidate_path = ""
+        self._sound_candidate_name = "Default beep"
+        self._preview_sound = None
+        self._preview_stop_event = None
         # PATCH2_NAV_UI_FIX_V1: an alarm is only a candidate until confirmation DONE.
         self._pending_confirmation_alarm = None
         self._pending_confirmation_previous = None
@@ -2181,6 +2224,9 @@ class AlarmEditScreen(Screen):
         # The time wheel and all alarm settings now live on one page.
         self.ui.show_settings()
 
+    def on_leave(self, *args):
+        self.stop_preview_sound()
+
     def handle_hardware_back(self):
         """Close the top modal first, then navigate one editor step backward."""
         # The root keyboard handler also checks these, but keep this method safe
@@ -2191,6 +2237,7 @@ class AlarmEditScreen(Screen):
             return True
 
         if getattr(self, "ui", None) is not None and self.ui.current == "sound":
+            self.stop_preview_sound()
             self.ui.show_settings()
             return True
             
@@ -2242,7 +2289,7 @@ class AlarmEditScreen(Screen):
             self.sound_name = "Default beep"
             self.sound_enabled = True
             self.vibrate = False
-            self.volume = 0.80
+            self.volume = 1.0
             self.snooze_enabled = True
             self.auto_dismiss_enabled = True
             self.auto_dismiss_sec = 5
@@ -2272,9 +2319,9 @@ class AlarmEditScreen(Screen):
             self.snooze_enabled = bool(alarm.get("snooze_enabled", True))
             self.auto_dismiss_enabled = bool(alarm.get("auto_dismiss_enabled", True))
             try:
-                self.volume = max(0.0, min(1.0, float(alarm.get("volume", 0.80))))
+                self.volume = max(0.0, min(1.0, float(alarm.get("volume", 1.0))))
             except (TypeError, ValueError):
-                self.volume = 0.80
+                self.volume = 1.0
             self.auto_dismiss_sec = max(1, min(3600, int(alarm.get("auto_dismiss_sec", 5) or 5)))
             self.snooze_sec = max(3, min(3600, int(alarm.get("snooze_sec", 300) or 300)))
 
@@ -2333,25 +2380,32 @@ class AlarmEditScreen(Screen):
         return ensure_builtin_ringtones(app.ringtone_cache_dir)
 
     def open_sound_page(self):
+        self.stop_preview_sound()
+        self._sound_candidate_path = str(self.sound_path or "")
+        self._sound_candidate_name = str(self.sound_name or "Default beep")
         self.ui.show_sound()
 
     def set_builtin_sound(self, name, path):
-        self.sound_path = str(path or "")
-        self.sound_name = str(name or "Classic Beep")
+        """Mark a candidate sound without leaving the audition page."""
+        self._sound_candidate_path = str(path or "")
+        self._sound_candidate_name = str(name or "Default beep")
+        self.error_message = ""
+        self.error_label.text = ""
+        self.ui.sound_page.refresh()
+
+    def apply_sound_selection(self):
+        """Apply the chosen candidate to this unsaved alarm draft."""
+        self.stop_preview_sound()
+        self.sound_path = str(self._sound_candidate_path or "")
+        self.sound_name = str(self._sound_candidate_name or "Default beep")
         self.error_message = ""
         self.error_label.text = ""
         self.ui.settings_page.refresh_sound()
         self.ui.show_settings()
-        self.preview_sound()
 
     def choose_builtin_sound(self):
-        """Select and preview the app's existing default beep."""
-        self.sound_path = ""
-        self.sound_name = "Default beep"
-        self.error_message = ""
-        self.error_label.text = ""
-        self.ui.settings_page.refresh_sound()
-        self.preview_sound()
+        """Queue the built-in default beep as the candidate sound."""
+        self.set_builtin_sound("Default beep", "")
 
     def choose_sound(self):
         self.error_message = ""
@@ -2389,32 +2443,69 @@ class AlarmEditScreen(Screen):
                 self._on_picker_error("Couldn't read that file — try picking it again.")
                 return
             print("[RedAlarm] ringtone copied to durable local path:", local_path)
-            self.sound_path = local_path
+            self._sound_candidate_path = local_path
         else:
-            self.sound_path = path
-        self.sound_name = name or os.path.basename(path.replace("\\", "/"))
+            self._sound_candidate_path = path
+        self._sound_candidate_name = name or os.path.basename(path.replace("\\", "/"))
         self.error_message = ""
         self.error_label.text = ""
-        self.ui.settings_page.refresh_sound()
-        self.ui.show_settings()
+        self.ui.show_sound()
+        self.ui.sound_page.refresh()
+        self.preview_sound(path=self._sound_candidate_path or App.get_running_app().default_ringtone_path, duration=8.0)
 
-    def preview_sound(self):
-        self.error_message = ""
-        self.error_label.text = ""
-        app = App.get_running_app()
-        path = self.sound_path or app.default_ringtone_path
-        sound = load_and_play(path, loop=False, volume=float(self.volume))
-        if sound is None:
-            self._on_picker_error("Couldn't play that sound — try another file.")
-            return
-
-        def _stop(_dt):
+    def stop_preview_sound(self):
+        event, self._preview_stop_event = self._preview_stop_event, None
+        if event is not None:
+            try:
+                event.cancel()
+            except Exception:
+                pass
+        sound, self._preview_sound = self._preview_sound, None
+        if sound is not None:
             try:
                 sound.stop()
+            except Exception:
+                pass
+            try:
                 sound.unload()
             except Exception:
                 pass
-        Clock.schedule_once(_stop, 2.5)
+
+    def preview_sound(self, path=None, duration=8.0):
+        """Audition a tone for up to eight seconds at the alarm slider gain.
+
+        Android playback uses the ALARM audio usage in _AndroidPlayer, so
+        the system alarm-volume stream is honoured just like real ringing.
+        """
+        self.stop_preview_sound()
+        self.error_message = ""
+        self.error_label.text = ""
+        app = App.get_running_app()
+        path = path or self._sound_candidate_path or self.sound_path or app.default_ringtone_path
+        try:
+            gain = max(0.0, min(1.0, float(self.volume)))
+        except (TypeError, ValueError):
+            gain = 1.0
+        sound = load_and_play(path, loop=False, volume=gain)
+        if sound is None:
+            self._on_picker_error("Couldn't preview that sound — try another file.")
+            return
+        self._preview_sound = sound
+        self.ui.sound_page.note.text = "Previewing at {:.0f}% alarm volume".format(gain * 100)
+        def _stop(_dt):
+            if self._preview_sound is sound:
+                self._preview_sound = None
+                self._preview_stop_event = None
+                try:
+                    sound.stop()
+                except Exception:
+                    pass
+                try:
+                    sound.unload()
+                except Exception:
+                    pass
+            return False
+        self._preview_stop_event = Clock.schedule_once(_stop, max(1.0, float(duration)))
 
     def cancel_edit(self):
         app = App.get_running_app()
@@ -2753,9 +2844,9 @@ class AlarmRingScreen(Screen):
             path = app.default_ringtone_path
 
         try:
-            ring_volume = max(0.0, min(1.0, float(alarm.get("volume", 0.80))))
+            ring_volume = max(0.0, min(1.0, float(alarm.get("volume", 1.0))))
         except (TypeError, ValueError):
-            ring_volume = 0.80
+            ring_volume = 1.0
         # On Android the exact-alarm receiver starts a native media-playback
         # foreground service before it asks the Activity to draw this screen.
         # That service keeps audio alive if Kivy's clock pauses on the lock screen.

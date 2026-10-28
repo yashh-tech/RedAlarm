@@ -5,7 +5,7 @@
     android:layout_height="match_parent"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:padding="12dp"
+    android:padding="6dp"
     android:baselineAligned="false"
     android:background="#000000">
 
@@ -17,9 +17,9 @@
         android:orientation="horizontal">
 
         <AnalogClock
-            android:layout_width="54dp"
-            android:layout_height="54dp"
-            android:layout_marginEnd="6dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginEnd="3dp"
             android:dial="@drawable/redalarm_widget_dial"
             android:hand_hour="@drawable/redalarm_widget_hour_hand"
             android:hand_minute="@drawable/redalarm_widget_minute_hand" />
@@ -45,7 +45,7 @@
                 android:format24Hour="h:mm a"
                 android:includeFontPadding="false"
                 android:textColor="#FFFFFF"
-                android:textSize="24sp"
+                android:textSize="20sp"
                 android:textStyle="bold" />
             <TextView
                 android:layout_width="wrap_content"
@@ -59,8 +59,8 @@
     <View
         android:layout_width="1dp"
         android:layout_height="52dp"
-        android:layout_marginStart="6dp"
-        android:layout_marginEnd="9dp"
+        android:layout_marginStart="2dp"
+        android:layout_marginEnd="4dp"
         android:background="#3B1116" />
 
     <LinearLayout
@@ -82,7 +82,7 @@
             android:layout_height="wrap_content"
             android:text="No upcoming alarm"
             android:textColor="#FFFFFF"
-            android:textSize="14sp"
+            android:textSize="12sp"
             android:textStyle="bold"
             android:maxLines="2"
             android:ellipsize="end" />

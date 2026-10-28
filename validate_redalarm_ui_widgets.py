@@ -37,6 +37,10 @@ def main() -> int:
         "self.editor.ui.show_snooze()", "self.editor.ui.show_auto_dismiss()",
         "self.editor.ui.show_vibration()", "class SnoozeIcon(Widget):",
         "class AutoDismissIcon(Widget):",
+        "class SoundSelectionPage(BoxLayout):",
+        "foreground_color=(1, 1, 1, 1)",
+        "USE SELECTED SOUND",
+        "self.editor.preview_sound(path=p, duration=8.0)",
     ):
         require(marker in module, "time-picker/editor marker missing: " + marker)
     for marker in (
@@ -47,6 +51,9 @@ def main() -> int:
     ):
         require(marker in main_source, "setting persistence marker missing: " + marker)
     print("PASS: Python syntax, fling settings, editor navigation, and persisted toggles")
+    for marker in ("def _animate_selection_toolbar", "selection_reveal = NumericProperty",
+                   "neon_glow = NumericProperty", "def copy_selected", "def confirm_delete_selected"):
+        require(marker in main_source, "animated multi-select marker missing: " + marker)
 
     provider = provider_path.read_text(encoding="utf-8")
     layout = widget_layout_path.read_text(encoding="utf-8")
@@ -58,6 +65,8 @@ def main() -> int:
             and 'android:format12Hour="h:mm a"' in layout
             and 'android:format24Hour="h:mm a"' in layout,
             "widget must show a live analog/digital clock in 12-hour time")
+    require('android:minWidth="220dp"' in info,
+            "combined widget minimum width may exceed a typical launcher grid")
     require('android:targetCellWidth="3"' in info and 'android:targetCellHeight="1"' in info,
             "combined widget is not configured as a 3x1 widget")
     require('android:previewImage="@drawable/redalarm_widget_preview"' in info

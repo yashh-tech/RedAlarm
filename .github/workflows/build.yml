@@ -33,6 +33,7 @@ jobs:
         run: |
           python -m compileall -q main.py redalarm_timepicker.py validate_redalarm_timepicker_integration.py
           python validate_redalarm_timepicker_integration.py
+          python validate_redalarm_ui_widgets.py
 
       - name: Install System Dependencies
         run: |

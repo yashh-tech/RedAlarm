@@ -209,9 +209,19 @@ def main() -> int:
     row_class_text = main_text.split("class AlarmRow(BoxLayout):", 1)[1].split("class AlarmListScreen", 1)[0]
     if "checkbox_touched" not in row_class_text:
         fail("Tapping/holding a checkbox must not conflict with the row long-press timer")
-    if 'width: dp(30) if root.selection_mode else 0' not in kv_text or 'opacity: 1 if root.selection_mode else 0' not in kv_text:
+    legacy_checkbox_markers = ("width: dp(30) if root.selection_mode else 0" in kv_text
+                              and "opacity: 1 if root.selection_mode else 0" in kv_text)
+    animated_checkbox_markers = ("width: dp(30) * root.selection_reveal" in kv_text
+                                and "opacity: root.selection_reveal" in kv_text
+                                and "selection_reveal = NumericProperty(0.0)" in main_text)
+    if not (legacy_checkbox_markers or animated_checkbox_markers):
         fail("Alarm-row checkboxes should appear only in selection mode")
-    if 'height: dp(62) if root.selection_mode else 0' not in kv_text or 'disabled: not root.selection_mode' not in kv_text:
+    legacy_toolbar_markers = ("height: dp(62) if root.selection_mode else 0" in kv_text
+                              and "disabled: not root.selection_mode" in kv_text)
+    animated_toolbar_markers = ("height: root.selection_toolbar_height" in kv_text
+                                and "opacity: root.selection_toolbar_opacity" in kv_text
+                                and "def _animate_selection_toolbar" in main_text)
+    if not (legacy_toolbar_markers or animated_toolbar_markers):
         fail("Alarm-list bulk action bar should be hidden until long-press selection")
     if 'on_release: root.on_delete_press()' not in kv_text or "def confirm_delete(self, alarm_id):" not in main_text:
         fail("Individual alarm delete with confirmation must remain available")
