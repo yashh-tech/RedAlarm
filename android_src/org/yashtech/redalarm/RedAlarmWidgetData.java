@@ -6,6 +6,8 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.widget.RemoteViews;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Locale;
 
 /** Shared display-only helpers for the optional RedAlarm home-screen widgets. */
@@ -24,16 +26,24 @@ final class RedAlarmWidgetData {
         } catch (Throwable ignored) { }
     }
 
-    static String upcomingText(Context context) {
+    private static boolean hasAlarm(Context context, boolean second) {
         SharedPreferences prefs = context.getSharedPreferences("redalarm_widget", Context.MODE_PRIVATE);
-        if (!prefs.getBoolean("has_next_alarm", false)) return "No upcoming alarm";
-        long target = prefs.getLong("next_alarm_at", 0L);
-        if (target <= 0L) return "No upcoming alarm";
-        long remaining = Math.max(0L, target - System.currentTimeMillis());
-        long totalMinutes = (remaining + 59999L) / 60000L;
-        long hours = totalMinutes / 60L;
-        long minutes = totalMinutes % 60L;
-        return String.format(Locale.getDefault(), "alarm in %d hours %d minutes", hours, minutes);
+        return prefs.getBoolean(second ? "has_second_alarm" : "has_next_alarm", false);
+    }
+
+    static String alarmTimeText(Context context, boolean second) {
+        if (!hasAlarm(context, second)) return second ? "No other alarm" : "No alarm set";
+        SharedPreferences prefs = context.getSharedPreferences("redalarm_widget", Context.MODE_PRIVATE);
+        long target = prefs.getLong(second ? "second_alarm_at" : "next_alarm_at", 0L);
+        if (target <= 0L) return second ? "No other alarm" : "No alarm set";
+        return new SimpleDateFormat("h:mm a", Locale.getDefault()).format(new Date(target));
+    }
+
+    static String alarmLabelText(Context context, boolean second) {
+        if (!hasAlarm(context, second)) return "";
+        SharedPreferences prefs = context.getSharedPreferences("redalarm_widget", Context.MODE_PRIVATE);
+        String label = prefs.getString(second ? "second_alarm_label" : "next_alarm_label", "Alarm");
+        return label == null || label.trim().isEmpty() ? "Alarm" : label.trim();
     }
 }
 

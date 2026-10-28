@@ -59,16 +59,26 @@ def main() -> int:
     layout = widget_layout_path.read_text(encoding="utf-8")
     info = widget_info_path.read_text(encoding="utf-8")
     hook = manifest_hook_path.read_text(encoding="utf-8")
-    require("RedAlarmWidgetData.upcomingText(context)" in provider,
-            "combined widget does not display the upcoming alarm")
+    require("RedAlarmWidgetData.alarmTimeText(context, false)" in provider
+            and "RedAlarmWidgetData.alarmTimeText(context, true)" in provider
+            and "RedAlarmWidgetData.alarmLabelText(context, false)" in provider
+            and "RedAlarmWidgetData.alarmLabelText(context, true)" in provider,
+            "combined widget must bind the next two alarm times and labels")
+    for marker in ("has_second_alarm", "second_alarm_at", "second_alarm_label", "alarmTimeText", "alarmLabelText"):
+        require(marker in (ROOT / "android_src/org/yashtech/redalarm/RedAlarmWidgetData.java").read_text(encoding="utf-8"),
+                "two-alarm widget data marker missing: " + marker)
+    for marker in ("@+id/redalarm_next_alarm_text", "@+id/redalarm_next_alarm_label",
+                   "@+id/redalarm_second_alarm_text", "@+id/redalarm_second_alarm_label"):
+        require(marker in layout, "widget layout is missing an alarm row view: " + marker)
     require("AnalogClock" in layout and "TextClock" in layout
             and 'android:format12Hour="h:mm a"' in layout
             and 'android:format24Hour="h:mm a"' in layout,
             "widget must show a live analog/digital clock in 12-hour time")
     require('android:minWidth="220dp"' in info,
             "combined widget minimum width may exceed a typical launcher grid")
-    require('android:targetCellWidth="3"' in info and 'android:targetCellHeight="1"' in info,
-            "combined widget is not configured as a 3x1 widget")
+    require('android:targetCellWidth="3"' in info and 'android:targetCellHeight="2"' in info
+            and 'android:minHeight="120dp"' in info,
+            "combined widget must be configured as an aligned 3x2 widget")
     require('android:previewImage="@drawable/redalarm_widget_preview"' in info
             and 'android:previewLayout="@layout/redalarm_clock_widget"' in info,
             "widget picker preview is not configured")

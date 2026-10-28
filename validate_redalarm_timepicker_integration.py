@@ -78,6 +78,19 @@ def main() -> int:
     compile(module_text, str(MODULE), "exec")
     print("PASS: main.py and redalarm_timepicker.py compile")
 
+    notif_start = main_text.find("def android_show_next_alarm_notification")
+    notif_end = main_text.find("def android_cancel_next_alarm_notification", notif_start)
+    if notif_start < 0 or notif_end < 0:
+        fail("Persistent next-alarm notification builder missing")
+    notif_text = main_text[notif_start:notif_end]
+    if 'builder.setContentTitle(JString("Next alarm on " + alarm_time))' not in notif_text:
+        fail("Next-alarm notification title must be minimal and show the alarm time")
+    if "builder.setUsesChronometer(True)" not in notif_text or "builder.setChronometerCountDown(True)" not in notif_text:
+        fail("Persistent next-alarm notification must retain its system countdown")
+    if "Notification$BigTextStyle" in notif_text or "builder.setSubText(" in notif_text:
+        fail("Next-alarm notification must not return to the tall expanded text layout")
+    print("PASS: minimal next-alarm notification retains Android countdown")
+
     namespace = extract_functions(module_text, {"format_duration", "_parse_duration"})
     fmt, parse = namespace["format_duration"], namespace["_parse_duration"]
     durations = {3: "3 sec", 30: "30 sec", 60: "1 min", 600: "10 min",

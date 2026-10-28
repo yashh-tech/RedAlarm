@@ -12,13 +12,13 @@
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="match_parent"
-        android:layout_weight="1.18"
+        android:layout_weight="0.95"
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
         <AnalogClock
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
             android:layout_marginEnd="3dp"
             android:dial="@drawable/redalarm_widget_dial"
             android:hand_hour="@drawable/redalarm_widget_hour_hand"
@@ -45,7 +45,7 @@
                 android:format24Hour="h:mm a"
                 android:includeFontPadding="false"
                 android:textColor="#FFFFFF"
-                android:textSize="20sp"
+                android:textSize="19sp"
                 android:textStyle="bold" />
             <TextView
                 android:layout_width="wrap_content"
@@ -58,34 +58,93 @@
 
     <View
         android:layout_width="1dp"
-        android:layout_height="52dp"
-        android:layout_marginStart="2dp"
-        android:layout_marginEnd="4dp"
+        android:layout_height="94dp"
+        android:layout_marginStart="3dp"
+        android:layout_marginEnd="5dp"
         android:background="#3B1116" />
 
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:gravity="center_vertical"
-        android:orientation="vertical">
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="NEXT ALARM"
-            android:textColor="#E21A2D"
-            android:textSize="10sp"
-            android:textStyle="bold" />
-        <TextView
-            android:id="@+id/redalarm_next_alarm_text"
+        android:layout_weight="1.15"
+        android:orientation="vertical"
+        android:gravity="center_vertical">
+
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="No upcoming alarm"
-            android:textColor="#FFFFFF"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:maxLines="2"
-            android:ellipsize="end" />
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center_vertical"
+            android:paddingStart="3dp">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="NEXT ALARM"
+                android:textColor="#E21A2D"
+                android:textSize="8sp"
+                android:textStyle="bold" />
+            <TextView
+                android:id="@+id/redalarm_next_alarm_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="No alarm set"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:maxLines="1"
+                android:ellipsize="end" />
+            <TextView
+                android:id="@+id/redalarm_next_alarm_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="#A6A6AE"
+                android:textSize="9sp"
+                android:maxLines="1"
+                android:ellipsize="end" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginStart="3dp"
+            android:layout_marginEnd="2dp"
+            android:background="#3B1116" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center_vertical"
+            android:paddingStart="3dp">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="AFTER THAT"
+                android:textColor="#E21A2D"
+                android:textSize="8sp"
+                android:textStyle="bold" />
+            <TextView
+                android:id="@+id/redalarm_second_alarm_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="No other alarm"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:maxLines="1"
+                android:ellipsize="end" />
+            <TextView
+                android:id="@+id/redalarm_second_alarm_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="#A6A6AE"
+                android:textSize="9sp"
+                android:maxLines="1"
+                android:ellipsize="end" />
+        </LinearLayout>
     </LinearLayout>
 </LinearLayout>
-

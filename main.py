@@ -333,10 +333,10 @@ if ANDROID:
         if perms:
             request_permissions(perms)
 
-    def android_update_alarm_widgets(trigger_dt, label=""):
-        """Publish display-only upcoming-alarm data to home-screen widgets.
+    def android_update_alarm_widgets(trigger_dt, label="", second_trigger_dt=None, second_label=""):
+        """Publish the next two alarm times for display-only home-screen widgets.
 
-        This does not schedule, stop, or otherwise control any alarm service.
+        This never schedules, cancels, or otherwise controls alarm delivery.
         """
         try:
             context = _activity().getApplicationContext()
@@ -350,6 +350,14 @@ if ANDROID:
                 edit.putBoolean("has_next_alarm", True)
                 edit.putLong("next_alarm_at", int(trigger_dt.timestamp() * 1000))
                 edit.putString("next_alarm_label", JString(str(label or "Alarm")))
+            if second_trigger_dt is None:
+                edit.putBoolean("has_second_alarm", False)
+                edit.putLong("second_alarm_at", 0)
+                edit.putString("second_alarm_label", JString(""))
+            else:
+                edit.putBoolean("has_second_alarm", True)
+                edit.putLong("second_alarm_at", int(second_trigger_dt.timestamp() * 1000))
+                edit.putString("second_alarm_label", JString(str(second_label or "Alarm")))
             edit.apply()
             update = Intent(JString("org.yashtech.redalarm.UPDATE_WIDGETS"))
             update.setPackage(context.getPackageName())
@@ -672,12 +680,9 @@ if ANDROID:
             context = _activity().getApplicationContext()
             Notification = autoclass("android.app.Notification")
             AndroidR_drawable = autoclass("android.R$drawable")
-            seconds_left = max(0.0, (trigger_dt - datetime.datetime.now()).total_seconds())
-            total_minutes = int(math.ceil(seconds_left / 60.0))
-            hours, minutes = divmod(total_minutes, 60)
-            eta_text = "Your next alarm in {} hr {} min".format(hours, minutes)
+            # Keep the alarm deadline as the Android chronometer source. The
+            # content itself stays deliberately short to avoid a tall expanded card.
             alarm_time = trigger_dt.strftime("%I:%M %p").lstrip("0")
-            alarm_label = (str(label or "Alarm").strip() or "Alarm")
 
             open_intent = Intent(context, PythonActivity)
             open_intent.setAction("com.redalarm.OPEN_NEXT_ALARM")
@@ -698,9 +703,8 @@ if ANDROID:
                 builder = autoclass("android.app.Notification$Builder")(context)
                 builder.setPriority(1)  # PRIORITY_LOW
 
-            builder.setContentTitle(JString("RedAlarm • Next alarm"))
-            builder.setContentText(JString(eta_text))
-            builder.setSubText(JString("{} • {}".format(alarm_label, alarm_time)))
+            builder.setContentTitle(JString("Next alarm on " + alarm_time))
+            builder.setContentText(JString(""))
             builder.setSmallIcon(AndroidR_drawable.ic_lock_idle_alarm)
             builder.setContentIntent(open_pi)
             builder.setCategory(Notification.CATEGORY_ALARM)
@@ -715,13 +719,6 @@ if ANDROID:
             builder.setOngoing(True)
             builder.setAutoCancel(False)
             builder.setOnlyAlertOnce(True)
-            try:
-                style = autoclass("android.app.Notification$BigTextStyle")()
-                style.bigText(JString("{}\n{} • {}".format(eta_text, alarm_label, alarm_time)))
-                builder.setStyle(style)
-            except Exception:
-                pass
-
             notification = builder.build()
             notification.flags = (
                 int(notification.flags)
@@ -3444,8 +3441,7 @@ class RedAlarmApp(App):
         self._refresh_next_alarm_notification()
         if ANDROID:
             now = datetime.datetime.now()
-            best = None
-            best_alarm = None
+            widget_candidates = []
             for alarm in self.store.all():
                 if not alarm.get("enabled", True):
                     continue
@@ -3453,13 +3449,16 @@ class RedAlarmApp(App):
                     trigger = self.scheduler.next_trigger_for(str(alarm.get("id", "")))
                     if trigger is None:
                         trigger = compute_next_trigger_dt(alarm, now=now)
-                    if best is None or trigger < best:
-                        best, best_alarm = trigger, alarm
+                    if trigger <= now:
+                        continue
+                    label = str(alarm.get("label") or "Alarm").strip() or "Alarm"
+                    widget_candidates.append((trigger, label))
                 except Exception as exc:
                     print("[RedAlarm] skipping widget trigger:", exc)
-            android_update_alarm_widgets(
-                best, str((best_alarm or {}).get("label") or "Alarm") if best else ""
-            )
+            widget_candidates.sort(key=lambda item: item[0])
+            first = widget_candidates[0] if widget_candidates else (None, "")
+            second = widget_candidates[1] if len(widget_candidates) > 1 else (None, "")
+            android_update_alarm_widgets(first[0], first[1], second[0], second[1])
 
     def on_resume(self):
         # Fires when Android brings this activity back to the foreground —

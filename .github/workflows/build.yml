@@ -7,6 +7,7 @@ on:
       - Latest_Update
       - yashh-tech-patch-2
       - fix/android-background-ringing
+      - fix/spinner-cancel-touch
   workflow_dispatch:
 
 jobs:
