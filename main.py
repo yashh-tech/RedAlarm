@@ -1616,12 +1616,18 @@ class AlarmRow(BoxLayout):
         self._press_touch = None
         self._press_origin = None
 
-    def _fire_long_press(self, touch):
+     def _fire_long_press(self, touch):
         self._long_press_event = None
         if self._press_touch is not touch or self.list_screen is None:
             return
         if not self.collide_point(*touch.pos) or self.list_screen.selection_mode:
             return
+        self._long_press_triggered = True
+        
+        # --- NEW MENU BEHAVIOR ---
+        # Instead of self.list_screen.begin_selection(self.alarm_id)
+        menu = AlarmContextMenu(alarm_item=self, touch_pos=touch.pos)
+        menu.open()
         self._long_press_triggered = True
         self.list_screen.begin_selection(self.alarm_id)
 
