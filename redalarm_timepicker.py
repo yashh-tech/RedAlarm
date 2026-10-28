@@ -2231,7 +2231,7 @@ class AlarmEditorUI(ScreenManager):
         super().__init__(**kwargs)
         self.editor = editor
         self.settings_screen = Screen(name="settings")
-        self.settings_page = AlarmScreenshotEditorPage(editor, editor.cancel_edit)
+        self.settings_page = AlarmAppSettingsPage(editor, editor.cancel_edit)
         # Compatibility aliases: old main.py call sites can keep using picker_page.
         self.picker_screen = self.settings_screen
         self.picker_page = self.settings_page
