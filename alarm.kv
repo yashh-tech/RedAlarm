@@ -81,11 +81,10 @@
             size_hint_y: None
             height: dp(44)
             spacing: dp(8)
-            Label:
-                text: "◴"
-                color: 1, 0.10, 0.17, 1
-                font_size: "38sp"
-                size_hint_x: None
+            VectorHomeIcon:
+                kind: "brand"
+                icon_color: (1, 0.10, 0.17, 1)
+                size_hint: None, 1
                 width: dp(46)
             Label:
                 text: "[color=#ff2436][b]RED[/b][/color] [color=#f7f7fa][b]ALARM[/b][/color]"
@@ -105,31 +104,50 @@
         AnalogClock:
             size_hint_y: 1
 
-        Label:
-            text: "[color=#ff2436]▦[/color]   " + root.date_text
-            markup: True
-            font_size: "15sp"
-            color: COL_TEXT
+        AnchorLayout:
             size_hint_y: None
             height: dp(24)
+            BoxLayout:
+                orientation: "horizontal"
+                size_hint: None, 1
+                width: dp(270)
+                spacing: dp(8)
+                AnchorLayout:
+                    size_hint: None, 1
+                    width: dp(18)
+                    VectorHomeIcon:
+                        kind: "calendar"
+                        icon_color: (1, 0.10, 0.17, 1)
+                        size_hint: None, None
+                        size: dp(16), dp(16)
+                Label:
+                    text: root.date_text
+                    font_size: "15sp"
+                    color: COL_TEXT
+                    halign: "left"
+                    valign: "middle"
+                    text_size: self.size
 
         AnchorLayout:
             size_hint_y: None
             height: dp(42)
             HomeButton:
-                text: "◉   " + root.next_alarm_text
+                text: root.next_alarm_text
                 font_size: "12sp"
                 size_hint: (0.90, None)
                 height: dp(39)
                 bg_color: (0.075, 0.018, 0.024, 1)
                 text_color: (1, 0.20, 0.28, 1)
+                icon_kind: "alarm"
+                icon_color: (1, 0.20, 0.28, 1)
 
         Widget:
             size_hint_y: None
             height: dp(4)
 
         HomeButton:
-            text: "☷     CHECK ALARMS      ›"
+            text: "CHECK ALARMS      ›"
+            icon_kind: "list"
             size_hint_y: None
             height: dp(60)
             bg_color: (0.055, 0.055, 0.063, 1)
@@ -138,7 +156,8 @@
             on_release: root.go_alarms()
 
         HomeButton:
-            text: "＋     SET NEW ALARM      ›"
+            text: "SET NEW ALARM      ›"
+            icon_kind: "plus"
             size_hint_y: None
             height: dp(60)
             bg_color: (0.70, 0.012, 0.055, 1)
@@ -175,12 +194,13 @@
         text: root.days_text
         markup: True
         color: COL_SUBTEXT
-        font_size: "9sp"
+        font_size: "11sp"
+        bold: True
         halign: "left"
         valign: "middle"
         text_size: self.size
         size_hint_y: None
-        height: dp(15)
+        height: dp(17)
 
 
 <AlarmRow>:

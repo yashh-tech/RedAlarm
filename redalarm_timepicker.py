@@ -42,6 +42,7 @@ TEXT = (0.975, 0.975, 0.985, 1)
 SUB = (0.64, 0.64, 0.68, 1)
 MUTED = (0.36, 0.36, 0.40, 1)
 DIVIDER = (0.14, 0.14, 0.16, 1)
+LABEL_WHITE = (249 / 255.0, 249 / 255.0, 249 / 255.0, 1.0)
 
 def add_rounded_background(widget, fill, radius=18, edge=None, edge_width=0.8):
     """Attach a resize-safe rounded rectangle background to a widget."""
@@ -829,9 +830,9 @@ class AlarmLabelInput(TextInput):
 
     def __init__(self, **kwargs):
         # Do not let disabled-field defaults make the label look like ghost text.
-        kwargs["foreground_color"] = (1, 1, 1, 1)
-        kwargs["disabled_foreground_color"] = (1, 1, 1, 1)
-        kwargs["hint_text_color"] = (0.92, 0.92, 0.95, 1)
+        kwargs["foreground_color"] = LABEL_WHITE
+        kwargs["disabled_foreground_color"] = LABEL_WHITE
+        kwargs["hint_text_color"] = (0.82, 0.82, 0.85, 1)
         # Android only offers its normal word suggestions for a text IME.
         kwargs["input_type"] = "text"
         kwargs["keyboard_suggestions"] = True
@@ -844,9 +845,9 @@ class AlarmLabelInput(TextInput):
         Clock.schedule_once(self._apply_readable_colors, 0.15)
 
     def _apply_readable_colors(self, *_):
-        self.foreground_color = (1, 1, 1, 1)
-        self.disabled_foreground_color = (1, 1, 1, 1)
-        self.hint_text_color = (0.92, 0.92, 0.95, 1)
+        self.foreground_color = LABEL_WHITE
+        self.disabled_foreground_color = LABEL_WHITE
+        self.hint_text_color = (0.82, 0.82, 0.85, 1)
 
     def insert_text(self, substring, from_undo=False):
         if from_undo:
@@ -935,7 +936,8 @@ class TimePickerPage(AnchorLayout):
             multiline=False, write_tab=False,
             background_normal="", background_active="",
             background_color=(0, 0, 0, 0),
-            foreground_color=TEXT, hint_text_color=(0.43, 0.43, 0.47, 1),
+            foreground_color=LABEL_WHITE, disabled_foreground_color=LABEL_WHITE,
+            hint_text_color=(0.82, 0.82, 0.85, 1),
             cursor_color=RED, selection_color=(RED[0], RED[1], RED[2], 0.45),
             font_size=sp(16), padding=(dp(12), dp(8)),
             size_hint_y=None, height=dp(36),
@@ -1971,9 +1973,9 @@ class AlarmAppSettingsPage(BoxLayout):
             text=str(self.editor.time_state.get("label") or ""),
             hint_text="Enter label (optional)", multiline=False, write_tab=False,
             background_normal="", background_active="",
-            background_color=(0, 0, 0, 0), foreground_color=(1, 1, 1, 1),
-            disabled_foreground_color=(1, 1, 1, 1),
-            hint_text_color=(0.76, 0.76, 0.80, 1), cursor_color=(1, 0.16, 0.22, 1),
+            background_color=(0, 0, 0, 0), foreground_color=LABEL_WHITE,
+            disabled_foreground_color=LABEL_WHITE,
+            hint_text_color=(0.82, 0.82, 0.85, 1), cursor_color=(1, 0.16, 0.22, 1),
             disabled=False, opacity=1,
             selection_color=(RED[0], RED[1], RED[2], 0.45),
             font_size=sp(16), padding=(dp(12), dp(8)),
@@ -2277,7 +2279,15 @@ class SoundSelectionPage(BoxLayout):
         app = App.get_running_app()
         self._add_choice("Default beep", "", app.default_ringtone_path)
         seen_paths = {str(app.default_ringtone_path)}
-        for name, path in self.editor.builtin_sound_choices():
+        try:
+            builtin_choices = self.editor.builtin_sound_choices()
+            self.note.text = "Tap PREVIEW to listen. Using a sound is a separate action."
+        except Exception as exc:
+            # Optional tone discovery must never stop the sound page opening.
+            print("[RedAlarm] could not load built-in ringtone list:", exc)
+            builtin_choices = []
+            self.note.text = "Built-in tones unavailable. Try BROWSE LOCAL MUSIC."
+        for name, path in builtin_choices:
             full_path = str(path or "")
             if not full_path or full_path in seen_paths:
                 continue
@@ -2326,10 +2336,16 @@ class AlarmEditorUI(ScreenManager):
         self.current = "settings"
 
     def show_sound(self):
-        self.sound_page.refresh()
         if hasattr(self, "transition"):
             self.transition.direction = "left"
+        # Navigate first: ringtone discovery errors must not keep the editor
+        # stuck on settings instead of opening the sound chooser.
         self.current = "sound"
+        try:
+            self.sound_page.refresh()
+        except Exception as exc:
+            print("[RedAlarm] sound-page refresh failed:", exc)
+            self.sound_page.note.text = "Built-in tones unavailable. Try BROWSE LOCAL MUSIC."
 
     def show_snooze(self):
         self.snooze_page.refresh()

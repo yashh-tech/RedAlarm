@@ -1443,6 +1443,95 @@ class HomeButton(Button):
     """Rounded flat-colour button (colours set from kv)."""
     bg_color = ListProperty([0.11, 0.09, 0.09, 1])
     text_color = ListProperty([0.96, 0.96, 0.96, 1])
+    icon_kind = StringProperty("")
+    icon_color = ListProperty([0.96, 0.96, 0.96, 1])
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(pos=self._redraw_home_icon, size=self._redraw_home_icon,
+                  icon_kind=self._redraw_home_icon, icon_color=self._redraw_home_icon)
+        self._redraw_home_icon()
+
+    def _redraw_home_icon(self, *_):
+        # Draw icons as vector lines instead of font glyphs; glyph fallbacks on
+        # some Android fonts were displayed as empty boxes.
+        self.canvas.after.clear()
+        if not self.icon_kind or self.width <= 0 or self.height <= 0:
+            return
+        side = min(dp(23), self.height * 0.62)
+        _draw_redalarm_vector(self.canvas.after, self.x + dp(22),
+                              self.center_y - side / 2, side,
+                              self.icon_kind, self.icon_color)
+
+
+def _draw_redalarm_vector(canvas, x, y, side, kind, color):
+    """Draw a small, font-independent RedAlarm icon into a Kivy canvas."""
+    cx, cy = x + side / 2, y + side / 2
+    sw = max(dp(1.2), side * 0.075)
+    with canvas:
+        Color(rgba=color)
+        if kind in ("brand", "alarm"):
+            radius = side * 0.32
+            Line(circle=(cx, cy, radius), width=sw)
+            Line(points=[cx, cy, cx, cy + radius * 0.58], width=sw, cap="round")
+            Line(points=[cx, cy, cx + radius * 0.47, cy], width=sw, cap="round")
+            Ellipse(pos=(cx - sw, cy - sw), size=(sw * 2, sw * 2))
+            if kind == "brand":
+                Line(points=[cx - radius * 0.72, cy + radius * 0.90,
+                             cx - radius * 1.04, cy + radius * 1.20],
+                     width=sw, cap="round")
+                Line(points=[cx + radius * 0.72, cy + radius * 0.90,
+                             cx + radius * 1.04, cy + radius * 1.20],
+                     width=sw, cap="round")
+        elif kind == "calendar":
+            left, bottom = x + side * 0.13, y + side * 0.10
+            width, height = side * 0.74, side * 0.78
+            Line(rounded_rectangle=(left, bottom, width, height, side * 0.10), width=sw)
+            Line(points=[left, bottom + height * 0.64,
+                         left + width, bottom + height * 0.64], width=sw)
+            for px in (left + width * 0.26, left + width * 0.70):
+                Line(points=[px, bottom + height * 0.78,
+                             px, bottom + height * 1.02], width=sw, cap="round")
+            for px in (left + width * 0.27, left + width * 0.63):
+                Ellipse(pos=(px - sw * 0.55, bottom + height * 0.19),
+                        size=(sw * 1.1, sw * 1.1))
+        elif kind == "list":
+            for row in range(3):
+                yy = y + side * (0.25 + row * 0.25)
+                Ellipse(pos=(x + side * 0.10, yy - sw * 0.45),
+                        size=(sw * 0.9, sw * 0.9))
+                Line(points=[x + side * 0.34, yy, x + side * 0.90, yy],
+                     width=sw, cap="round")
+        elif kind == "plus":
+            radius = side * 0.36
+            Line(circle=(cx, cy, radius), width=sw)
+            Line(points=[cx - radius * 0.55, cy, cx + radius * 0.55, cy],
+                 width=sw * 1.25, cap="round")
+            Line(points=[cx, cy - radius * 0.55, cx, cy + radius * 0.55],
+                 width=sw * 1.25, cap="round")
+
+
+class VectorHomeIcon(Widget):
+    """Standalone font-independent logo/icon used in the home header and date."""
+    kind = StringProperty("brand")
+    icon_color = ListProperty([1, 0.10, 0.17, 1])
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("size_hint", (None, None))
+        kwargs.setdefault("size", (dp(20), dp(20)))
+        super().__init__(**kwargs)
+        self.bind(pos=self._redraw, size=self._redraw,
+                  kind=self._redraw, icon_color=self._redraw)
+        self._redraw()
+
+    def _redraw(self, *_):
+        self.canvas.clear()
+        if self.width > 0 and self.height > 0:
+            side = min(self.width, self.height)
+            _draw_redalarm_vector(
+                self.canvas, self.center_x - side / 2, self.center_y - side / 2,
+                side, self.kind, self.icon_color,
+            )
 
 
 class DigitInput(TextInput):
@@ -1937,12 +2026,12 @@ class AlarmListScreen(Screen):
             row.label_is_primary = bool(label)
             days = list(alarm.get("days") or [])
             short_days = ("M", "T", "W", "T", "F", "S", "S")
-            row.days_text = "  ".join(
-                "[color=#ff2938][b]●{}[/b][/color]".format(day)
+            row.days_text = "   ".join(
+                "[color=#FF3548][b]{}[/b][/color]".format(day)
                 if index < len(days) and bool(days[index])
-                else "[color=#48484f]●{}[/color]".format(day)
+                else "[color=#D9D9E0][b]{}[/b][/color]".format(day)
                 for index, day in enumerate(short_days)
-            ) if any(days) else "[color=#85858d]ONCE[/color]"
+            ) if any(days) else "[color=#F9F9F9][b]ONCE[/b][/color]"
             row.enabled = bool(alarm.get("enabled", True))
             row.selection_mode = self.selection_mode
             row.selected = row.alarm_id in self.selected_alarm_ids
@@ -2450,7 +2539,6 @@ class AlarmEditScreen(Screen):
         self.error_message = ""
         self.error_label.text = ""
         self.ui.show_sound()
-        self.ui.sound_page.refresh()
         self.preview_sound(path=self._sound_candidate_path or App.get_running_app().default_ringtone_path, duration=8.0)
 
     def stop_preview_sound(self):
@@ -2482,16 +2570,15 @@ class AlarmEditScreen(Screen):
         self.error_label.text = ""
         app = App.get_running_app()
         path = path or self._sound_candidate_path or self.sound_path or app.default_ringtone_path
-        try:
-            gain = max(0.0, min(1.0, float(self.volume)))
-        except (TypeError, ValueError):
-            gain = 1.0
+        # Full player gain for previews. Android's ALARM audio usage still
+        # honours the system alarm-volume setting for the final speaker output.
+        gain = 1.0
         sound = load_and_play(path, loop=False, volume=gain)
         if sound is None:
             self._on_picker_error("Couldn't preview that sound — try another file.")
             return
         self._preview_sound = sound
-        self.ui.sound_page.note.text = "Previewing at {:.0f}% alarm volume".format(gain * 100)
+        self.ui.sound_page.note.text = "Preview at 100% player gain · device alarm volume controls output"
         def _stop(_dt):
             if self._preview_sound is sound:
                 self._preview_sound = None

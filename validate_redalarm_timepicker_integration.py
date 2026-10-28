@@ -227,7 +227,11 @@ def main() -> int:
         fail("Individual alarm delete with confirmation must remain available")
     if 'kwargs["input_type"] = "text"' not in module_text or 'kwargs["keyboard_suggestions"] = True' not in module_text:
         fail("Label input must request a text keyboard with suggestions")
-    if 'kwargs["disabled_foreground_color"] = (1, 1, 1, 1)' not in module_text:
+    if not (
+        'kwargs["disabled_foreground_color"] = (1, 1, 1, 1)' in module_text
+        or ('kwargs["disabled_foreground_color"] = LABEL_WHITE' in module_text
+            and 'LABEL_WHITE = (249 / 255.0, 249 / 255.0, 249 / 255.0, 1.0)' in module_text)
+    ):
         fail("Label input disabled text must remain readable")
     print("PASS: long-press checkboxes/action bar, individual delete confirmation, and bulk actions")
     print("PASS: readable label text, text keyboard, suggestions, and 25-word cap")
