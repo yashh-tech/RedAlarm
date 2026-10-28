@@ -255,6 +255,11 @@ def main() -> int:
         fail("Alarm label must force #F9F9F9 on Kivy's rendered text lines")
     if 'text: "CANCEL" if root.selection_mode else "SELECT"' not in kv_text or "def start_selection(self):" not in main_text:
         fail("Alarm list must provide an explicit Select control that opens empty selection mode")
+    if ('size: dp(136), dp(48)' not in kv_text
+            or 'on_press: root.cancel_selection() if root.selection_mode else root.start_selection()' not in kv_text):
+        fail("Select control must have a large, immediate touch target")
+    if "selection_toolbar_height=dp(124)" not in main_text:
+        fail("Selection toolbar must reserve enough height for its action buttons")
     print("PASS: long-press checkboxes/action bar, individual delete confirmation, and bulk actions")
     print("PASS: readable label text, text keyboard, suggestions, and 25-word cap")
     if 'size: dp(24), dp(24)' not in kv_text or 'anchor_y: "center"' not in kv_text:

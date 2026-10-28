@@ -1865,7 +1865,9 @@ class AlarmListScreen(Screen):
     def _animate_selection_toolbar(self, visible):
         Animation.cancel_all(self, "selection_toolbar_height", "selection_toolbar_opacity")
         Animation(
-            selection_toolbar_height=dp(104) if visible else 0.0,
+            # Reserve enough height for the label, three equal action buttons,
+            # and bottom breathing room so the button row is never clipped.
+            selection_toolbar_height=dp(124) if visible else 0.0,
             selection_toolbar_opacity=1.0 if visible else 0.0,
             duration=0.22, t="out_quad",
         ).start(self)

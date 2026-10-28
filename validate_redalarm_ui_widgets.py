@@ -56,6 +56,12 @@ def main() -> int:
             "explicit Select action must open selection mode with zero selected alarms")
     require('text: "CANCEL" if root.selection_mode else "SELECT"' in (ROOT / "alarm.kv").read_text(encoding="utf-8"),
             "alarm-list SELECT/CANCEL control is missing")
+    kv_source = (ROOT / "alarm.kv").read_text(encoding="utf-8")
+    require('size: dp(136), dp(48)' in kv_source and
+            'on_press: root.cancel_selection() if root.selection_mode else root.start_selection()' in kv_source,
+            "SELECT/CANCEL touch target is too small or waits for release")
+    require("selection_toolbar_height=dp(124)" in main_source,
+            "selection toolbar height is too small for its action row")
     for tone in ('("Pulse",', '("Double Alert",', '("Rising Tone",', '("Digital",'):
         require(tone in main_source, "built-in tone missing: " + tone)
     print("PASS: Python syntax, fling settings, editor navigation, and persisted toggles")
