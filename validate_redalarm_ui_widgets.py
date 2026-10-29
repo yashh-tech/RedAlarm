@@ -39,6 +39,8 @@ def main() -> int:
         "class AutoDismissIcon(Widget):",
         "class SoundSelectionPage(BoxLayout):",
         "foreground_color=(1, 1, 1, 1)",
+        "LABEL_WHITE = (1, 1, 1, 1)",
+        "effect_cls=None",
         "def _get_line_options(self):",
         "options[\"color\"] = LABEL_WHITE",
         "USE SELECTED SOUND",
@@ -62,9 +64,9 @@ def main() -> int:
             "def toggle_selection_mode(self):" in main_source,
             "SELECT/CANCEL tap handling is not wired to the large touch target")
     require("percent_text = StringProperty" in module and
-            "self.editor.set_preview_volume(value)" in module and
-            "gain = max(0.0, min(1.0, float(self.volume)))" in main_source,
-            "Live alarm-volume percentage or selected-volume preview wiring is missing")
+            "self.editor.set_alarm_volume(value)" in module and
+            "load_and_play(path, loop=False, volume=1.0, use_media_volume=True)" in main_source,
+            "Alarm-volume slider and media-stream sound preview wiring are missing")
     root_manager_text = main_source.split("class RootManager(ScreenManager):", 1)[1].split(
         "# ======================================================================\n# 5. APP", 1
     )[0]
@@ -72,9 +74,16 @@ def main() -> int:
             "Global horizontal gestures should not intercept app navigation")
     require("selection_toolbar_height=dp(124)" in main_source,
             "selection toolbar height is too small for its action row")
-    for tone in ('("Pulse",', '("Double Alert",', '("Rising Tone",', '("Digital",'):
+    for tone in ('("Pulse",', '("Double Alert",', '("Rising Tone",', '("Digital",',
+                 '("Soft Chime",', '("Morning Rise",', '("Triple Pulse",',
+                 '("Deep Beacon",', '("Bright Wake",'):
         require(tone in main_source, "built-in tone missing: " + tone)
     print("PASS: Python syntax, fling settings, editor navigation, and persisted toggles")
+    require('AudioAttributes.USAGE_MEDIA if use_media_volume else AudioAttributes.USAGE_ALARM' in main_source
+            and 'load_and_play(path, loop=False, volume=1.0, use_media_volume=True)' in main_source,
+            "sound previews must use media volume while real alarms retain alarm volume")
+    require(module.count("effect_cls=None") >= 2 and "LABEL_WHITE = (1, 1, 1, 1)" in module,
+            "overscroll effects or pure-white alarm-label text are not configured")
     for marker in ("def _animate_selection_toolbar", "selection_reveal = NumericProperty",
                    "neon_glow = NumericProperty", "def copy_selected", "def confirm_delete_selected"):
         require(marker in main_source, "animated multi-select marker missing: " + marker)

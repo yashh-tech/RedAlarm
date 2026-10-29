@@ -77,6 +77,18 @@ def main() -> int:
     compile(main_text, str(MAIN), "exec")
     compile(module_text, str(MODULE), "exec")
     print("PASS: main.py and redalarm_timepicker.py compile")
+    if ('AudioAttributes.USAGE_MEDIA if use_media_volume else AudioAttributes.USAGE_ALARM' not in main_text
+            or 'load_and_play(path, loop=False, volume=1.0, use_media_volume=True)' not in main_text):
+        fail("Sound preview must use full player gain and the device media-volume stream without changing alarm ringing")
+    if any(name not in main_text for name in ("Soft Chime", "Morning Rise", "Triple Pulse", "Deep Beacon", "Bright Wake")):
+        fail("One or more original built-in preview tones are missing")
+    if module_text.count("effect_cls=None") < 2:
+        fail("Edit Alarm and Sound page must disable overscroll effects")
+    if 'LABEL_WHITE = (1, 1, 1, 1)' not in module_text:
+        fail("Alarm-label text must use pure white")
+    if "AlarmContextMenu(" in main_text or "     def _fire_long_press(self, touch):" in main_text:
+        fail("A malformed/undefined long-press context-menu regression remains")
+    print("PASS: media-volume sound previews, built-in tones, no overscroll, readable label, and long-press syntax")
 
     notif_start = main_text.find("def android_show_next_alarm_notification")
     notif_end = main_text.find("def android_cancel_next_alarm_notification", notif_start)
@@ -248,7 +260,7 @@ def main() -> int:
     if not (
         'kwargs["disabled_foreground_color"] = (1, 1, 1, 1)' in module_text
         or ('kwargs["disabled_foreground_color"] = LABEL_WHITE' in module_text
-            and 'LABEL_WHITE = (249 / 255.0, 249 / 255.0, 249 / 255.0, 1.0)' in module_text)
+            and 'LABEL_WHITE = (1, 1, 1, 1)' in module_text)
     ):
         fail("Label input disabled text must remain readable")
     if "def _get_line_options(self):" not in module_text or 'options["color"] = LABEL_WHITE' not in module_text:
@@ -260,9 +272,9 @@ def main() -> int:
             or "def toggle_selection_mode(self):" not in main_text):
         fail("Select control must toggle selection mode on a completed tap")
     if ("percent_text = StringProperty" not in module_text
-            or "def set_preview_volume(self, value):" not in main_text
-            or "gain = max(0.0, min(1.0, float(self.volume)))" not in main_text):
-        fail("Live alarm-volume percentage and selected-volume preview wiring are missing")
+            or "def set_alarm_volume(self, value):" not in main_text
+            or "load_and_play(path, loop=False, volume=1.0, use_media_volume=True)" not in main_text):
+        fail("Alarm-volume slider and media-stream sound preview wiring are missing")
     root_manager_text = main_text.split("class RootManager(ScreenManager):", 1)[1].split(
         "# ======================================================================\n# 5. APP", 1
     )[0]

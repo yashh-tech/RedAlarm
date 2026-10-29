@@ -805,7 +805,7 @@ if ANDROID:
         song just sits there / Silent" bug), and because it ignores the alarm
         volume stream."""
 
-        def __init__(self, path, loop=True, volume=1.0):
+        def __init__(self, path, loop=True, volume=1.0, use_media_volume=False):
             MediaPlayer = autoclass("android.media.MediaPlayer")
             AudioAttributes = autoclass("android.media.AudioAttributes")
             AudioAttributesBuilder = autoclass("android.media.AudioAttributes$Builder")
@@ -813,7 +813,7 @@ if ANDROID:
             self._volume = max(0.0, min(1.0, float(volume)))
             try:
                 attrs = (AudioAttributesBuilder()
-                         .setUsage(AudioAttributes.USAGE_ALARM)
+                         .setUsage(AudioAttributes.USAGE_MEDIA if use_media_volume else AudioAttributes.USAGE_ALARM)
                          .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                          .build())
                 self._mp.setAudioAttributes(attrs)
@@ -1172,10 +1172,15 @@ def ensure_builtin_ringtones(cache_dir):
         ("Double Alert", [(1040, .12), (0, .10), (1040, .12), (0, .22), (1310, .22)]),
         ("Rising Tone", [(520, .16), (660, .16), (820, .16), (1040, .28)]),
         ("Digital", [(1320, .07), (0, .06), (990, .07), (0, .06), (1320, .07), (0, .16), (880, .22)]),
+        ("Soft Chime", [(660, .16), (0, .06), (880, .20), (0, .06), (1100, .30)]),
+        ("Morning Rise", [(440, .18), (554, .18), (659, .18), (880, .32)]),
+        ("Triple Pulse", [(980, .09), (0, .07), (980, .09), (0, .07), (980, .20)]),
+        ("Deep Beacon", [(440, .24), (0, .14), (660, .32)]),
+        ("Bright Wake", [(880, .12), (1046, .12), (1318, .24), (0, .09), (1046, .18)]),
     ]
     rate = 22050
     for name, sequence in patterns:
-        filename = "builtin_v2_{}.wav".format(name.lower().replace(" ", "_"))
+        filename = "builtin_v3_{}.wav".format(name.lower().replace(" ", "_"))
         path = os.path.join(work_dir, filename)
         try:
             if not usable(path):
@@ -1310,7 +1315,7 @@ def resolve_ringtone_for_playback(raw_path, app_storage_dir, display_name=None):
     return raw_path
 
 
-def load_and_play(path, loop=True, volume=1.0):
+def load_and_play(path, loop=True, volume=1.0, use_media_volume=False):
     """Play a ringtone with the requested 0..1 volume on Android or desktop."""
     if not path:
         return None
@@ -1323,7 +1328,7 @@ def load_and_play(path, loop=True, volume=1.0):
         volume = 1.0
     if ANDROID:
         try:
-            player = _AndroidPlayer(path, loop, volume=volume)
+            player = _AndroidPlayer(path, loop, volume=volume, use_media_volume=use_media_volume)
             print("[RedAlarm] playback: native MediaPlayer started:", path)
             return player
         except Exception as exc:
@@ -2639,50 +2644,31 @@ class AlarmEditScreen(Screen):
             except Exception:
                 pass
 
-    def set_preview_volume(self, value):
-        """Apply the selected alarm volume to the editor and any active preview."""
+    def set_alarm_volume(self, value):
+        """Store alarm playback gain without changing the media-volume preview."""
         try:
-            gain = max(0.0, min(1.0, float(value)))
+            self.volume = max(0.0, min(1.0, float(value)))
         except (TypeError, ValueError):
-            gain = 1.0
-        self.volume = gain
-        sound = self._preview_sound
-        if sound is None:
-            return
-        try:
-            setter = getattr(sound, "set_volume", None)
-            if callable(setter):
-                setter(gain)
-            else:
-                sound.volume = gain
-        except Exception as exc:
-            print("[RedAlarm] preview volume update failed:", exc)
-
+            self.volume = 1.0
     def preview_sound(self, path=None, duration=8.0):
-        """Audition a tone for up to eight seconds at the alarm slider gain.
+        """Preview at full player gain using Android's MEDIA volume stream.
 
-        Android playback uses the ALARM audio usage in _AndroidPlayer, so
-        the system alarm-volume stream is honoured just like real ringing.
+        Hardware volume keys control media volume while auditioning a sound.
+        Actual alarm ringing still uses the separate ALARM stream and its saved
+        per-alarm gain because ringing calls load_and_play() without this flag.
         """
         self.stop_preview_sound()
         self.error_message = ""
         self.error_label.text = ""
         app = App.get_running_app()
         path = path or self._sound_candidate_path or self.sound_path or app.default_ringtone_path
-        # Preview at the selected alarm volume; actual ringing already uses
-        # the saved alarm configuration in Python and native playback.
-        try:
-            gain = max(0.0, min(1.0, float(self.volume)))
-        except (TypeError, ValueError):
-            gain = 1.0
-        sound = load_and_play(path, loop=False, volume=gain)
+        sound = load_and_play(path, loop=False, volume=1.0, use_media_volume=True)
         if sound is None:
-            self._on_picker_error("Couldn't preview that sound — try another file.")
+            self._on_picker_error("Couldn't preview that sound â€” try another file.")
             return
         self._preview_sound = sound
-        self.ui.sound_page.note.text = "Preview at {}% player gain · device alarm volume controls output".format(
-            int(round(gain * 100))
-        )
+        self.ui.sound_page.note.text = "Preview uses 100% player gain and your device MEDIA volume."
+
         def _stop(_dt):
             if self._preview_sound is sound:
                 self._preview_sound = None
@@ -2696,8 +2682,8 @@ class AlarmEditScreen(Screen):
                 except Exception:
                     pass
             return False
-        self._preview_stop_event = Clock.schedule_once(_stop, max(1.0, float(duration)))
 
+        self._preview_stop_event = Clock.schedule_once(_stop, max(1.0, float(duration)))
     def cancel_edit(self):
         app = App.get_running_app()
         destination = self._return_screen if self._return_screen in ("home", "list") else "home"

@@ -381,22 +381,31 @@
             text_color: 1, 1, 1, 1
             on_release: root.open_overlay_settings()
 
-        AnchorLayout:
+        FloatLayout:
             size_hint_y: None
-            # A larger parent hit area makes the control easy to tap reliably.
             height: dp(54)
-            anchor_x: "right"
-            HomeButton:
+            Button:
+                text: ""
+                size_hint: 1, 1
+                background_normal: ""
+                background_down: ""
+                background_color: (0, 0, 0, 0)
+                on_release: root.toggle_selection_mode()
+            Label:
                 text: "CANCEL" if root.selection_mode else "SELECT"
                 font_size: "12sp"
                 size_hint: None, None
                 size: dp(136), dp(48)
-                bg_color: (0.10, 0.035, 0.045, 1) if root.selection_mode else (0.06, 0.06, 0.07, 1)
-                text_color: COL_TEXT
-                # Toggle once after a completed tap.
-                on_release: root.toggle_selection_mode()
-
-        BoxLayout:
+                pos_hint: {"right": 1, "center_y": 0.5}
+                color: COL_TEXT
+                bold: True
+                canvas.before:
+                    Color:
+                        rgba: (0.10, 0.035, 0.045, 1) if root.selection_mode else (0.06, 0.06, 0.07, 1)
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [dp(13)]        BoxLayout:
             orientation: "vertical"
             size_hint_y: None
             height: root.selection_toolbar_height

@@ -42,7 +42,7 @@ TEXT = (0.975, 0.975, 0.985, 1)
 SUB = (0.64, 0.64, 0.68, 1)
 MUTED = (0.36, 0.36, 0.40, 1)
 DIVIDER = (0.14, 0.14, 0.16, 1)
-LABEL_WHITE = (249 / 255.0, 249 / 255.0, 249 / 255.0, 1.0)
+LABEL_WHITE = (1, 1, 1, 1)
 
 def add_rounded_background(widget, fill, radius=18, edge=None, edge_width=0.8):
     """Attach a resize-safe rounded rectangle background to a widget."""
@@ -832,7 +832,7 @@ class AlarmLabelInput(TextInput):
         # Do not let disabled-field defaults make the label look like ghost text.
         kwargs["foreground_color"] = LABEL_WHITE
         kwargs["disabled_foreground_color"] = LABEL_WHITE
-        kwargs["hint_text_color"] = (0.82, 0.82, 0.85, 1)
+        kwargs["hint_text_color"] = (0.58, 0.58, 0.62, 1)
         # Android only offers its normal word suggestions for a text IME.
         kwargs["input_type"] = "text"
         kwargs["keyboard_suggestions"] = True
@@ -855,7 +855,7 @@ class AlarmLabelInput(TextInput):
     def _apply_readable_colors(self, *_):
         self.foreground_color = LABEL_WHITE
         self.disabled_foreground_color = LABEL_WHITE
-        self.hint_text_color = (0.82, 0.82, 0.85, 1)
+        self.hint_text_color = (0.58, 0.58, 0.62, 1)
         # Re-rasterize existing text after restoring the exact requested color.
         self._trigger_refresh_text()
 
@@ -953,8 +953,8 @@ class TimePickerPage(AnchorLayout):
             size_hint_y=None, height=dp(36),
         )
         add_rounded_background(
-            self.label_input, (0.065, 0.065, 0.075, 1), radius=13,
-            edge=(0.20, 0.20, 0.23, 1), edge_width=0.8,
+            self.label_input, (0, 0, 0, 1), radius=13,
+            edge=(RED[0] * 0.72, RED[1] * 0.72, RED[2] * 0.72, 1), edge_width=1.0,
         )
         self.label_input.bind(text=self._label_changed)
         label_block.add_widget(self.label_input)
@@ -1995,15 +1995,15 @@ class AlarmAppSettingsPage(BoxLayout):
             size_hint_y=None, height=dp(36),
         )
         add_rounded_background(
-            self.label_input, (0.065, 0.065, 0.075, 1), radius=13,
-            edge=(0.20, 0.20, 0.23, 1), edge_width=0.8,
+            self.label_input, (0, 0, 0, 1), radius=13,
+            edge=(RED[0] * 0.72, RED[1] * 0.72, RED[2] * 0.72, 1), edge_width=1.0,
         )
         self.label_input.bind(text=self._label_changed)
         label_block.add_widget(self.label_input)
         self.card.add_widget(label_block)
         self.card.add_widget(self._separator())
 
-        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=0,
+        scroll = ScrollView(effect_cls=None, do_scroll_x=False, do_scroll_y=True, bar_width=0,
                             scroll_type=["content"], size_hint=(1, 1), scroll_y=1.0)
         self.content = BoxLayout(orientation="vertical", size_hint_y=None,
                                  spacing=dp(5), padding=(0, dp(3), 0, dp(4)))
@@ -2127,7 +2127,7 @@ class AlarmAppSettingsPage(BoxLayout):
         Clock.schedule_once(lambda *_: self.refresh_from_editor(), 0)
 
     def _volume_changed(self, _widget, value):
-        self.editor.set_preview_volume(value)
+        self.editor.set_alarm_volume(value)
 
     def _vibration_changed(self, value):
         self.editor.vibrate = bool(value)
@@ -2229,7 +2229,7 @@ class SoundSelectionPage(BoxLayout):
                           halign="left", valign="middle")
         self.note.bind(size=lambda w, v: setattr(w, "text_size", v))
         self.add_widget(self.note)
-        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(2))
+        scroll = ScrollView(effect_cls=None, do_scroll_x=False, do_scroll_y=True, bar_width=dp(2))
         self.choices = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(7),
                                  padding=(0, dp(2), 0, dp(2)))
         self.choices.bind(minimum_height=self.choices.setter("height"))
@@ -2264,19 +2264,30 @@ class SoundSelectionPage(BoxLayout):
         self.on_back()
 
     def _volume_changed(self, _widget, value):
-        self.editor.set_preview_volume(value)
+        self.editor.set_alarm_volume(value)
 
     def _candidate(self, name, path):
         self.editor.set_builtin_sound(name, path)
 
     def _add_choice(self, name, select_path, preview_path):
-        row = BoxLayout(orientation="horizontal", spacing=dp(7), size_hint_y=None,
-                        height=dp(48), padding=(dp(7), dp(4)))
-        selected = (str(select_path or "") == str(self.editor._sound_candidate_path or "")
-                    and str(name) == str(self.editor._sound_candidate_name or "Default beep"))
-        label = Label(text=("●  " if selected else "○  ") + name,
-                      color=(1, 0.28, 0.36, 1) if selected else TEXT,
-                      bold=selected, font_size=sp(12), halign="left", valign="middle")
+        selected = (
+            str(select_path or "") == str(self.editor._sound_candidate_path or "")
+            and str(name) == str(self.editor._sound_candidate_name or "Default beep")
+        )
+        row = BoxLayout(
+            orientation="horizontal", spacing=dp(7), size_hint_y=None,
+            height=dp(50), padding=(dp(8), dp(5)),
+        )
+        add_rounded_background(
+            row, (0.045, 0.045, 0.052, 1), radius=13,
+            edge=(RED[0], RED[1], RED[2], 0.80 if selected else 0.35), edge_width=1.0,
+        )
+        label = Label(
+            text=("â—  " if selected else "â—‹  ") + str(name),
+            color=(1, 0.28, 0.36, 1) if selected else TEXT,
+            bold=selected, font_size=sp(12), halign="left", valign="middle",
+            size_hint=(1, 1),
+        )
         label.bind(size=lambda w, v: setattr(w, "text_size", v))
         row.add_widget(label)
         row.add_widget(RoundedActionButton(
@@ -2287,22 +2298,7 @@ class SoundSelectionPage(BoxLayout):
             "USE", callback=lambda n=name, p=select_path: self._candidate(n, p),
             accent=selected, size_hint=(None, None), size=(dp(58), dp(38)),
         ))
-        with row.canvas.before:
-            Color(0.075, 0.025, 0.032, 1)
-            row._bg = RoundedRectangle(pos=row.pos, size=row.size, radius=[dp(13)])
-            Color(0.58, 0.025, 0.05, 0.86 if selected else 0.38)
-            row._edge = Line(rounded_rectangle=(row.x, row.y, row.width, row.height, dp(13)),
-                             width=dp(1.0))
-        row.bind(pos=lambda w, *_: self._update_row_canvas(w),
-                 size=lambda w, *_: self._update_row_canvas(w))
         self.choices.add_widget(row)
-
-    @staticmethod
-    def _update_row_canvas(row):
-        row._bg.pos = row.pos
-        row._bg.size = row.size
-        row._edge.rounded_rectangle = (row.x, row.y, row.width, row.height, dp(13))
-
     def refresh(self):
         # Refresh after navigation so the ScrollView has its final layout.
         try:
