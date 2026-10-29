@@ -33,7 +33,6 @@ from kivy.graphics import Color, Ellipse, Line, Rectangle, RoundedRectangle
 from kivy.metrics import dp
 from kivy.utils import platform
 from kivy.uix.widget import Widget
-from splash_screen import SplashScreen
 from kivy.properties import (
     StringProperty,
     NumericProperty,
@@ -3262,7 +3261,9 @@ class RedAlarmApp(App):
     def build(self):
         self.title = APP_TITLE
         self._queued_intents = []
-        self._startup_started = time.monotonic()
+        # Keep the handoff black while the alarm store and scheduler initialise.
+        # The native Android logo-only presplash in buildozer.spec is unchanged.
+        Window.clearcolor = (0, 0, 0, 1)
         Window.bind(on_keyboard=self._on_keyboard)
         Window.bind(on_request_close=self._on_request_close)
 
@@ -3284,15 +3285,76 @@ class RedAlarmApp(App):
             # UI is ready.
             android_activity.bind(on_new_intent=self._on_new_intent)
 
-        self._splash = self._build_splash()
+        self._startup_placeholder = Widget()
         Clock.schedule_once(self._finish_startup, 0.1)
-        return self._splash
-        
-    def _build_splash(self):
-        return SplashScreen(duration=1.0)
-    
+        return self._startup_placeholder
+
 
     def _finish_startup(self, dt):
+        """Run startup without leaving a decorative loading page stuck on Ready."""
+        try:
+            self._finish_startup_impl(dt)
+        except Exception:
+            details = traceback.format_exc()
+            try:
+                with open(self.crash_log_path, "a", encoding="utf-8") as log_file:
+                    log_file.write("\n---- STARTUP FAILURE ----\n")
+                    log_file.write(details)
+            except Exception:
+                pass
+            print("[RedAlarm] startup failed:\n" + details)
+
+            # If the real root was already constructed, don't block access to it.
+            # Otherwise show a clear error instead of a fake, permanently-ready splash.
+            if getattr(self, "_pending_root", None) is not None:
+                self._show_main_ui(0)
+            else:
+                self._show_startup_error(details)
+
+    def _show_startup_error(self, details):
+        try:
+            Window.remove_widget(self._startup_placeholder)
+        except Exception:
+            pass
+
+        lines = [line.strip() for line in details.splitlines() if line.strip()]
+        summary = lines[-1] if lines else "Unknown startup error"
+        panel = BoxLayout(
+            orientation="vertical",
+            padding=dp(24),
+            spacing=dp(12),
+        )
+        panel.add_widget(Label(
+            text="RedAlarm couldn't start",
+            font_size="22sp",
+            color=(1, 1, 1, 1),
+            size_hint_y=None,
+            height=dp(48),
+        ))
+        panel.add_widget(Label(
+            text=summary,
+            font_size="14sp",
+            color=(1, 0.45, 0.45, 1),
+            halign="center",
+            valign="middle",
+            size_hint=(1, None),
+            height=dp(100),
+            text_size=(max(dp(120), Window.width - dp(48)), None),
+        ))
+        panel.add_widget(Label(
+            text="Full details were saved to crash_log.txt. Share that log to diagnose this startup error.",
+            font_size="13sp",
+            color=(0.82, 0.82, 0.82, 1),
+            halign="center",
+            valign="middle",
+            size_hint=(1, None),
+            height=dp(80),
+            text_size=(max(dp(120), Window.width - dp(48)), None),
+        ))
+        Window.add_widget(panel)
+        self._startup_error_screen = panel
+
+    def _finish_startup_impl(self, dt):
         Builder.load_file("alarm.kv")
         self.store = AlarmStore(os.path.join(self.user_data_dir, "alarms.json"))
         self.ringtone_cache_dir = os.path.join(self.user_data_dir, "ringtones")
@@ -3351,19 +3413,16 @@ class RedAlarmApp(App):
         for args in queued:
             self._dispatch_intent(*args)
 
-        # Keep the splash visible for one second from app startup.
-        remaining = max(
-            0.0,
-            1.0 - (time.monotonic() - self._startup_started)
-        )
-        Clock.schedule_once(self._show_main_ui, remaining)
+        # No extra one-second in-app loading screen. Show the app as soon as
+        # startup setup above has completed.
+        Clock.schedule_once(self._show_main_ui, 0)
 
     def _show_main_ui(self, dt):
         root = getattr(self, "_pending_root", None)
         if root is None:
             return
 
-        Window.remove_widget(self._splash)
+        Window.remove_widget(self._startup_placeholder)
         Window.add_widget(root)
         if ANDROID:
             self.refresh_next_alarm_notification()
