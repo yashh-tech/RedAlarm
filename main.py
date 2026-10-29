@@ -49,6 +49,7 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
+from kivy.effects.dampedscroll import DampedScrollEffect
 from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
@@ -1165,22 +1166,17 @@ def ensure_builtin_ringtones(cache_dir):
     except Exception as exc:
         print("[RedAlarm] default built-in tone generation failed:", exc)
 
-    # Versioned filenames force regeneration of older, very quiet previews.
-    # All tones are mono PCM WAVs with a soft attack/release and safe amplitude.
+    # Keep the built-in set intentionally small: two soft tones and two pop alerts.
+    # Versioned filenames replace the previous cached set on existing installs.
     patterns = [
-        ("Pulse", [(740, .12), (0, .08), (880, .18), (0, .10), (740, .12)]),
-        ("Double Alert", [(1040, .12), (0, .10), (1040, .12), (0, .22), (1310, .22)]),
-        ("Rising Tone", [(520, .16), (660, .16), (820, .16), (1040, .28)]),
-        ("Digital", [(1320, .07), (0, .06), (990, .07), (0, .06), (1320, .07), (0, .16), (880, .22)]),
-        ("Soft Chime", [(660, .16), (0, .06), (880, .20), (0, .06), (1100, .30)]),
-        ("Morning Rise", [(440, .18), (554, .18), (659, .18), (880, .32)]),
-        ("Triple Pulse", [(980, .09), (0, .07), (980, .09), (0, .07), (980, .20)]),
-        ("Deep Beacon", [(440, .24), (0, .14), (660, .32)]),
-        ("Bright Wake", [(880, .12), (1046, .12), (1318, .24), (0, .09), (1046, .18)]),
+        ("Soft Breeze", [(440, .28), (554, .34), (659, .46)], 0.36),
+        ("Gentle Chime", [(659, .22), (784, .30), (988, .42)], 0.42),
+        ("Pop Alert", [(960, .08), (0, .06), (1320, .16)], 0.78),
+        ("Double Pop", [(1046, .08), (0, .07), (1046, .08), (0, .09), (1568, .18)], 0.78),
     ]
     rate = 22050
-    for name, sequence in patterns:
-        filename = "builtin_v3_{}.wav".format(name.lower().replace(" ", "_"))
+    for name, sequence, gain in patterns:
+        filename = "builtin_v4_{}.wav".format(name.lower().replace(" ", "_"))
         path = os.path.join(work_dir, filename)
         try:
             if not usable(path):
@@ -1193,7 +1189,7 @@ def ensure_builtin_ringtones(cache_dir):
                     for index in range(count):
                         t = index / float(rate)
                         envelope = min(1.0, t * 45.0) * min(1.0, (seconds - t) * 18.0)
-                        sample = int(0.78 * envelope * 32767 * math.sin(2 * math.pi * frequency * t))
+                        sample = int(gain * envelope * 32767 * math.sin(2 * math.pi * frequency * t))
                         samples.append(max(-32768, min(32767, sample)))
                 with wave.open(path, "wb") as wav:
                     wav.setnchannels(1)
@@ -2303,7 +2299,7 @@ class PermissionsPopup(Popup):
             size_hint_y=None, height=dp(44))
         root.add_widget(title)
 
-        scroll = ScrollView(do_scroll_x=False, bar_width=0)
+        scroll = ScrollView(do_scroll_x=False, bar_width=0, effect_cls=DampedScrollEffect)
         grid = GridLayout(cols=1, spacing=dp(6), size_hint_y=None)
         grid.bind(minimum_height=grid.setter("height"))
         for item in self._items:
@@ -2556,7 +2552,11 @@ class AlarmEditScreen(Screen):
     def open_sound_page(self):
         self.stop_preview_sound()
         self._sound_candidate_path = str(self.sound_path or "")
-        self._sound_candidate_name = str(self.sound_name or "Default beep")
+        current_name = str(self.sound_name or "").strip()
+        if not self._sound_candidate_path and current_name.lower() in ("", "default beep", "classic beep"):
+            self._sound_candidate_name = "Classic Beep"
+        else:
+            self._sound_candidate_name = current_name or "Classic Beep"
         self.ui.show_sound()
 
     def set_builtin_sound(self, name, path):

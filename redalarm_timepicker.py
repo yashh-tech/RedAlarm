@@ -29,6 +29,7 @@ from kivy.uix.widget import Widget
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.scrollview import ScrollView
+from kivy.effects.dampedscroll import DampedScrollEffect
 from kivy.uix.textinput import TextInput
 from kivy.graphics import Color, Ellipse, Line, RoundedRectangle, Rectangle, Triangle
 
@@ -832,7 +833,7 @@ class AlarmLabelInput(TextInput):
         # Do not let disabled-field defaults make the label look like ghost text.
         kwargs["foreground_color"] = LABEL_WHITE
         kwargs["disabled_foreground_color"] = LABEL_WHITE
-        kwargs["hint_text_color"] = (0.58, 0.58, 0.62, 1)
+        kwargs["hint_text_color"] = (1, 1, 1, 1)
         # Android only offers its normal word suggestions for a text IME.
         kwargs["input_type"] = "text"
         kwargs["keyboard_suggestions"] = True
@@ -855,7 +856,7 @@ class AlarmLabelInput(TextInput):
     def _apply_readable_colors(self, *_):
         self.foreground_color = LABEL_WHITE
         self.disabled_foreground_color = LABEL_WHITE
-        self.hint_text_color = (0.58, 0.58, 0.62, 1)
+        self.hint_text_color = (1, 1, 1, 1)
         # Re-rasterize existing text after restoring the exact requested color.
         self._trigger_refresh_text()
 
@@ -1705,7 +1706,10 @@ class DurationRow(BoxLayout):
         self.max_value = int(max_value)
         self.on_change = on_change
 
-        labels = BoxLayout(orientation="vertical", spacing=dp(1), size_hint_x=1)
+        labels = BoxLayout(
+            orientation="vertical", spacing=dp(1),
+            size_hint=(1, None), height=dp(40),
+        )
         title_label = Label(
             text=title, color=SUB, font_size=sp(12), bold=True,
             halign="left", valign="middle", size_hint_y=None, height=dp(21),
@@ -1726,7 +1730,11 @@ class DurationRow(BoxLayout):
             )
             icon_holder.add_widget(icon(color=SUB, size=(dp(23), dp(23))))
             label_row.add_widget(icon_holder)
-            label_row.add_widget(labels)
+            label_holder = AnchorLayout(
+                anchor_x="left", anchor_y="center", size_hint_x=1,
+            )
+            label_holder.add_widget(labels)
+            label_row.add_widget(label_holder)
             self.add_widget(label_row)
         else:
             self.add_widget(labels)
@@ -1800,7 +1808,7 @@ class DurationRow(BoxLayout):
         )
         content.add_widget(title)
 
-        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(3))
+        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(3), effect_cls=DampedScrollEffect)
         choices = BoxLayout(
             orientation="vertical", size_hint_y=None, spacing=dp(8),
             padding=(0, dp(2), dp(2), dp(4)),
@@ -2004,7 +2012,8 @@ class AlarmAppSettingsPage(BoxLayout):
         self.card.add_widget(self._separator())
 
         scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=0,
-                            scroll_type=["content"], size_hint=(1, 1), scroll_y=1.0)
+                            scroll_type=["content"], size_hint=(1, 1), scroll_y=1.0,
+                            effect_cls=DampedScrollEffect)
         self.content = BoxLayout(orientation="vertical", size_hint_y=None,
                                  spacing=dp(5), padding=(0, dp(3), 0, dp(4)))
         self.content.bind(minimum_height=self.content.setter("height"))
@@ -2087,8 +2096,11 @@ class AlarmAppSettingsPage(BoxLayout):
         vib_holder.add_widget(VibrationIcon(color=SUB, size=(dp(23), dp(25))))
         vibration.add_widget(vib_holder)
         vib_title = self._label("Vibration", 12, TEXT, False, dp(26))
-        vib_title.size_hint_x = 1
-        vibration.add_widget(vib_title)
+        vib_label_holder = AnchorLayout(
+            anchor_x="left", anchor_y="center", size_hint_x=1,
+        )
+        vib_label_holder.add_widget(vib_title)
+        vibration.add_widget(vib_label_holder)
         self.vibration_switch = PillSwitch(value=bool(self.editor.vibrate),
                                            on_change=self._vibration_changed,
                                            size=(dp(60), dp(27)))
@@ -2283,7 +2295,7 @@ class SoundSelectionPage(BoxLayout):
             edge=(RED[0], RED[1], RED[2], 0.80 if selected else 0.35), edge_width=1.0,
         )
         label = Label(
-            text=("â—  " if selected else "â—‹  ") + str(name),
+            text=("[x]  " if selected else "[ ]  ") + str(name),
             color=(1, 0.28, 0.36, 1) if selected else TEXT,
             bold=selected, font_size=sp(12), halign="left", valign="middle",
             size_hint=(1, 1),
@@ -2313,7 +2325,7 @@ class SoundSelectionPage(BoxLayout):
         default_path = str(getattr(app, "default_ringtone_path", "") or "")
         seen_paths = set()
         try:
-            self._add_choice("Default beep", "", default_path)
+            self._add_choice("Classic Beep", "", default_path)
             if default_path:
                 seen_paths.add(default_path)
         except Exception as exc:
