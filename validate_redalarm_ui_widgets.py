@@ -58,8 +58,18 @@ def main() -> int:
             "alarm-list SELECT/CANCEL control is missing")
     kv_source = (ROOT / "alarm.kv").read_text(encoding="utf-8")
     require('size: dp(136), dp(48)' in kv_source and
-            'on_press: root.cancel_selection() if root.selection_mode else root.start_selection()' in kv_source,
-            "SELECT/CANCEL touch target is too small or waits for release")
+            'on_release: root.toggle_selection_mode()' in kv_source and
+            "def toggle_selection_mode(self):" in main_source,
+            "SELECT/CANCEL tap handling is not wired to the large touch target")
+    require("percent_text = StringProperty" in module and
+            "self.editor.set_preview_volume(value)" in module and
+            "gain = max(0.0, min(1.0, float(self.volume)))" in main_source,
+            "Live alarm-volume percentage or selected-volume preview wiring is missing")
+    root_manager_text = main_source.split("class RootManager(ScreenManager):", 1)[1].split(
+        "# ======================================================================\n# 5. APP", 1
+    )[0]
+    require("def on_touch_down(" not in root_manager_text and "def on_touch_up(" not in root_manager_text,
+            "Global horizontal gestures should not intercept app navigation")
     require("selection_toolbar_height=dp(124)" in main_source,
             "selection toolbar height is too small for its action row")
     for tone in ('("Pulse",', '("Double Alert",', '("Rising Tone",', '("Digital",'):

@@ -826,6 +826,17 @@ if ANDROID:
                 self.unload()
                 raise
 
+        def set_volume(self, value):
+            try:
+                self._volume = max(0.0, min(1.0, float(value)))
+            except (TypeError, ValueError):
+                self._volume = 1.0
+            if self._mp is not None:
+                try:
+                    self._mp.setVolume(self._volume, self._volume)
+                except Exception:
+                    pass
+
         def stop(self):
             try:
                 if self._mp is not None and self._mp.isPlaying():
@@ -1776,18 +1787,12 @@ class AlarmRow(BoxLayout):
         self._press_touch = None
         self._press_origin = None
 
-     def _fire_long_press(self, touch):
+    def _fire_long_press(self, touch):
         self._long_press_event = None
         if self._press_touch is not touch or self.list_screen is None:
             return
         if not self.collide_point(*touch.pos) or self.list_screen.selection_mode:
             return
-        self._long_press_triggered = True
-        
-        # --- NEW MENU BEHAVIOR ---
-        # Instead of self.list_screen.begin_selection(self.alarm_id)
-        menu = AlarmContextMenu(alarm_item=self, touch_pos=touch.pos)
-        menu.open()
         self._long_press_triggered = True
         self.list_screen.begin_selection(self.alarm_id)
 
@@ -1912,6 +1917,13 @@ class AlarmListScreen(Screen):
         if self.selection_mode:
             return
         self._apply_selection_state([], keep_mode=True)
+
+    def toggle_selection_mode(self):
+        """Toggle SELECT/CANCEL without selecting an alarm."""
+        if self.selection_mode:
+            self.cancel_selection()
+        else:
+            self.start_selection()
 
     def begin_selection(self, alarm_id):
         ids = list(self.selected_alarm_ids) if self.selection_mode else []
@@ -2627,6 +2639,25 @@ class AlarmEditScreen(Screen):
             except Exception:
                 pass
 
+    def set_preview_volume(self, value):
+        """Apply the selected alarm volume to the editor and any active preview."""
+        try:
+            gain = max(0.0, min(1.0, float(value)))
+        except (TypeError, ValueError):
+            gain = 1.0
+        self.volume = gain
+        sound = self._preview_sound
+        if sound is None:
+            return
+        try:
+            setter = getattr(sound, "set_volume", None)
+            if callable(setter):
+                setter(gain)
+            else:
+                sound.volume = gain
+        except Exception as exc:
+            print("[RedAlarm] preview volume update failed:", exc)
+
     def preview_sound(self, path=None, duration=8.0):
         """Audition a tone for up to eight seconds at the alarm slider gain.
 
@@ -2638,15 +2669,20 @@ class AlarmEditScreen(Screen):
         self.error_label.text = ""
         app = App.get_running_app()
         path = path or self._sound_candidate_path or self.sound_path or app.default_ringtone_path
-        # Full player gain for previews. Android's ALARM audio usage still
-        # honours the system alarm-volume setting for the final speaker output.
-        gain = 1.0
+        # Preview at the selected alarm volume; actual ringing already uses
+        # the saved alarm configuration in Python and native playback.
+        try:
+            gain = max(0.0, min(1.0, float(self.volume)))
+        except (TypeError, ValueError):
+            gain = 1.0
         sound = load_and_play(path, loop=False, volume=gain)
         if sound is None:
             self._on_picker_error("Couldn't preview that sound — try another file.")
             return
         self._preview_sound = sound
-        self.ui.sound_page.note.text = "Preview at 100% player gain · device alarm volume controls output"
+        self.ui.sound_page.note.text = "Preview at {}% player gain · device alarm volume controls output".format(
+            int(round(gain * 100))
+        )
         def _stop(_dt):
             if self._preview_sound is sound:
                 self._preview_sound = None
@@ -3171,38 +3207,10 @@ class AlarmRingScreen(Screen):
 
 
 class RootManager(ScreenManager):
-    """Fast screen transitions plus horizontal swipe navigation."""
+    """Fast screen transitions without global horizontal swipe navigation."""
     def __init__(self, **kwargs):
         kwargs.setdefault("transition", SlideTransition(duration=0.14))
         super().__init__(**kwargs)
-        self._swipe_start = None
-
-    def on_touch_down(self, touch):
-        if self.collide_point(*touch.pos) and not getattr(touch, "is_mouse_scrolling", False):
-            self._swipe_start = (touch, tuple(touch.pos), self.current)
-        return super().on_touch_down(touch)
-
-    def on_touch_up(self, touch):
-        start = self._swipe_start
-        self._swipe_start = None
-        handled = super().on_touch_up(touch)
-        if not start or start[0] is not touch or self.current != start[2]:
-            return handled
-        dx = touch.x - start[1][0]
-        dy = touch.y - start[1][1]
-        if abs(dx) < dp(90) or abs(dx) < abs(dy) * 1.35 or self.current == "ring":
-            return handled
-        if dx < 0:  # swipe left = back
-            if self.current == "edit":
-                self.get_screen("edit").cancel_edit()
-            elif self.current == "list":
-                self.get_screen("list").go_home()
-        else:  # swipe right = forward
-            if self.current == "home":
-                self.current = "list"
-            elif self.current == "list":
-                self.get_screen("list").open_new_alarm()
-        return True
 
 
 # ======================================================================

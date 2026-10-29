@@ -393,9 +393,8 @@
                 size: dp(136), dp(48)
                 bg_color: (0.10, 0.035, 0.045, 1) if root.selection_mode else (0.06, 0.06, 0.07, 1)
                 text_color: COL_TEXT
-                # Enter selection immediately on touch-down instead of waiting
-                # for release; bind only once to avoid SELECT then CANCEL firing.
-                on_press: root.cancel_selection() if root.selection_mode else root.start_selection()
+                # Toggle once after a completed tap.
+                on_release: root.toggle_selection_mode()
 
         BoxLayout:
             orientation: "vertical"

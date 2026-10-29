@@ -256,8 +256,18 @@ def main() -> int:
     if 'text: "CANCEL" if root.selection_mode else "SELECT"' not in kv_text or "def start_selection(self):" not in main_text:
         fail("Alarm list must provide an explicit Select control that opens empty selection mode")
     if ('size: dp(136), dp(48)' not in kv_text
-            or 'on_press: root.cancel_selection() if root.selection_mode else root.start_selection()' not in kv_text):
-        fail("Select control must have a large, immediate touch target")
+            or 'on_release: root.toggle_selection_mode()' not in kv_text
+            or "def toggle_selection_mode(self):" not in main_text):
+        fail("Select control must toggle selection mode on a completed tap")
+    if ("percent_text = StringProperty" not in module_text
+            or "def set_preview_volume(self, value):" not in main_text
+            or "gain = max(0.0, min(1.0, float(self.volume)))" not in main_text):
+        fail("Live alarm-volume percentage and selected-volume preview wiring are missing")
+    root_manager_text = main_text.split("class RootManager(ScreenManager):", 1)[1].split(
+        "# ======================================================================\n# 5. APP", 1
+    )[0]
+    if "def on_touch_down(" in root_manager_text or "def on_touch_up(" in root_manager_text:
+        fail("Root-level gestures must not intercept navigation/touch controls")
     if "selection_toolbar_height=dp(124)" not in main_text:
         fail("Selection toolbar must reserve enough height for its action buttons")
     print("PASS: long-press checkboxes/action bar, individual delete confirmation, and bulk actions")

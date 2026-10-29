@@ -1094,6 +1094,7 @@ class DayPill(ToggleButton):
 class VolumeControl(Widget):
     """Custom volume slider, avoiding Kivy's default blue slider thumb."""
     value = NumericProperty(0.58)
+    percent_text = StringProperty("58%")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1110,6 +1111,8 @@ class VolumeControl(Widget):
         Clock.schedule_once(lambda *_: self._sync(), 0.12)
 
     def _sync(self, *_):
+        percent = int(round(max(0.0, min(1.0, float(self.value))) * 100))
+        self.percent_text = "{}%".format(percent)
         h = dp(4)
         d = dp(18)
         y = self.center_y - h / 2
@@ -2057,7 +2060,7 @@ class AlarmAppSettingsPage(BoxLayout):
         self.content.add_widget(sound_block)
 
         volume_row = BoxLayout(orientation="horizontal", spacing=dp(8),
-                               size_hint_y=None, height=dp(38))
+                               size_hint_y=None, height=dp(44))
         speaker_holder = AnchorLayout(anchor_x="center", anchor_y="center", size_hint=(None, 1), width=dp(27))
         speaker_holder.add_widget(SpeakerIcon(color=SUB, size=(dp(25), dp(24))))
         volume_row.add_widget(speaker_holder)
@@ -2065,7 +2068,16 @@ class AlarmAppSettingsPage(BoxLayout):
                                             size_hint=(1, 1))
         self.volume_control.bind(value=self._volume_changed)
         volume_row.add_widget(self.volume_control)
-        volume_row.add_widget(self._label("VOL", 9.5, SUB, True, dp(18), halign="right"))
+        self.volume_percent_label = Label(
+            text=self.volume_control.percent_text, color=TEXT, font_size=sp(11),
+            bold=True, size_hint=(None, 1), width=dp(38),
+            halign="right", valign="middle",
+        )
+        self.volume_percent_label.bind(size=lambda w, v: setattr(w, "text_size", v))
+        self.volume_control.bind(
+            percent_text=lambda _widget, value: setattr(self.volume_percent_label, "text", value)
+        )
+        volume_row.add_widget(self.volume_percent_label)
         self.content.add_widget(volume_row)
         self.content.add_widget(self._separator())
 
@@ -2115,7 +2127,7 @@ class AlarmAppSettingsPage(BoxLayout):
         Clock.schedule_once(lambda *_: self.refresh_from_editor(), 0)
 
     def _volume_changed(self, _widget, value):
-        self.editor.volume = max(0.0, min(1.0, float(value)))
+        self.editor.set_preview_volume(value)
 
     def _vibration_changed(self, value):
         self.editor.vibrate = bool(value)
@@ -2224,13 +2236,23 @@ class SoundSelectionPage(BoxLayout):
         scroll.add_widget(self.choices)
         self.add_widget(scroll)
         volume_row = BoxLayout(orientation="horizontal", spacing=dp(8),
-                               size_hint_y=None, height=dp(38))
+                               size_hint_y=None, height=dp(44))
         volume_row.add_widget(SpeakerIcon(color=TEXT, size=(dp(24), dp(24))))
         volume_row.add_widget(Label(text="ALARM VOLUME", color=SUB, font_size=sp(10), bold=True,
                                     size_hint=(None, 1), width=dp(91)))
         self.volume_control = VolumeControl(value=float(self.editor.volume), size_hint=(1, 1))
         self.volume_control.bind(value=self._volume_changed)
         volume_row.add_widget(self.volume_control)
+        self.volume_percent_label = Label(
+            text=self.volume_control.percent_text, color=TEXT, font_size=sp(11),
+            bold=True, size_hint=(None, 1), width=dp(38),
+            halign="right", valign="middle",
+        )
+        self.volume_percent_label.bind(size=lambda w, v: setattr(w, "text_size", v))
+        self.volume_control.bind(
+            percent_text=lambda _widget, value: setattr(self.volume_percent_label, "text", value)
+        )
+        volume_row.add_widget(self.volume_percent_label)
         self.add_widget(volume_row)
         self.add_widget(RoundedActionButton("BROWSE LOCAL MUSIC", callback=self.editor.choose_sound,
                                             accent=False, size_hint_y=None, height=dp(42)))
@@ -2242,7 +2264,7 @@ class SoundSelectionPage(BoxLayout):
         self.on_back()
 
     def _volume_changed(self, _widget, value):
-        self.editor.volume = max(0.0, min(1.0, float(value)))
+        self.editor.set_preview_volume(value)
 
     def _candidate(self, name, path):
         self.editor.set_builtin_sound(name, path)
@@ -2282,35 +2304,61 @@ class SoundSelectionPage(BoxLayout):
         row._edge.rounded_rectangle = (row.x, row.y, row.width, row.height, dp(13))
 
     def refresh(self):
-        self.volume_control.value = float(self.editor.volume)
+        # Refresh after navigation so the ScrollView has its final layout.
+        try:
+            self.volume_control.value = float(self.editor.volume)
+        except (TypeError, ValueError):
+            pass
         self.choices.clear_widgets()
         candidate_name = str(self.editor._sound_candidate_name or "Default beep")
         self.current_label.text = "Candidate: {}  ·  press USE SELECTED SOUND to return".format(candidate_name)
+
         app = App.get_running_app()
-        self._add_choice("Default beep", "", app.default_ringtone_path)
-        seen_paths = {str(app.default_ringtone_path)}
+        default_path = str(getattr(app, "default_ringtone_path", "") or "")
+        seen_paths = set()
+        try:
+            self._add_choice("Default beep", "", default_path)
+            if default_path:
+                seen_paths.add(default_path)
+        except Exception as exc:
+            print("[RedAlarm] default ringtone row failed:", exc)
+
         try:
             builtin_choices = list(self.editor.builtin_sound_choices() or [])
-            self.note.text = (
-                "Built-in sounds ready — PREVIEW uses 100% player gain."
-                if builtin_choices else
-                "Default beep remains available. Try BROWSE LOCAL MUSIC for other sounds."
-            )
         except Exception as exc:
-            # Sound discovery must never stop the chooser. Individual tone
-            # generation failures are isolated by ensure_builtin_ringtones().
             print("[RedAlarm] could not load built-in ringtone list:", exc)
             builtin_choices = []
-            self.note.text = "Default beep remains available. Try BROWSE LOCAL MUSIC for other sounds."
+
         for name, path in builtin_choices:
             full_path = str(path or "")
             if not full_path or full_path in seen_paths:
                 continue
             seen_paths.add(full_path)
-            self._add_choice(str(name), full_path, full_path)
+            try:
+                self._add_choice(str(name), full_path, full_path)
+            except Exception as exc:
+                print("[RedAlarm] ringtone row failed:", name, exc)
+
         candidate_path = str(self.editor._sound_candidate_path or "")
         if candidate_path and candidate_path not in seen_paths:
-            self._add_choice("Local: " + candidate_name, candidate_path, candidate_path)
+            try:
+                self._add_choice("Local: " + candidate_name, candidate_path, candidate_path)
+            except Exception as exc:
+                print("[RedAlarm] selected local ringtone row failed:", exc)
+
+        if not self.choices.children:
+            fallback = Label(
+                text="No built-in tones available.\nUse BROWSE LOCAL MUSIC below.",
+                color=TEXT, font_size=sp(12), halign="center", valign="middle",
+                size_hint_y=None, height=dp(52),
+            )
+            fallback.bind(size=lambda w, v: setattr(w, "text_size", v))
+            self.choices.add_widget(fallback)
+            self.note.text = "Built-in tones are unavailable; local music browsing remains available."
+        elif builtin_choices:
+            self.note.text = "Tap PREVIEW to listen at the selected alarm volume. USE applies the sound."
+        else:
+            self.note.text = "Default beep remains available. BROWSE LOCAL MUSIC opens your files."
 
 
 class AlarmEditorUI(ScreenManager):
@@ -2353,14 +2401,18 @@ class AlarmEditorUI(ScreenManager):
     def show_sound(self):
         if hasattr(self, "transition"):
             self.transition.direction = "left"
-        # Navigate first: ringtone discovery errors must not keep the editor
-        # stuck on settings instead of opening the sound chooser.
         self.current = "sound"
+        Clock.schedule_once(self._refresh_sound_page, 0)
+
+    def _refresh_sound_page(self, _dt=0):
+        if self.current != "sound":
+            return False
         try:
             self.sound_page.refresh()
         except Exception as exc:
             print("[RedAlarm] sound-page refresh failed:", exc)
             self.sound_page.note.text = "Built-in tones unavailable. Try BROWSE LOCAL MUSIC."
+        return False
 
     def show_snooze(self):
         self.snooze_page.refresh()
