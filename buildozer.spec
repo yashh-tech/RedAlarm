@@ -7,6 +7,8 @@ package.domain = org.yashtech
 
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,mp3,wav,ogg,m4a,json,ttf
+source.exclude_dirs = tests,__pycache__,.git,.github
+source.exclude_patterns = *.bak,RedAlarm_TimePicker_Test.py,TimePicker_Test.py,TimePicker_Test2.py,gemini_timepicker.py,apply_redalarm_launcher_icon_only.py,apply_redalarm_timepicker_integration.py,apply_patch*.py,RedAlarm_Alarm_Ringing_Hotfix.py,validate_redalarm_timepicker_integration.py,validate_redalarm_ui_widgets.py,redalarm_timepicker_payload.py,apply_redalarm_background_reliability_patch.py,fix_redalarm_done_keeps_app_open.py,redalarm_lock_screen_and_header_patch.py
 
 version = 1.0.0
 
@@ -19,7 +21,7 @@ orientation = portrait
 # is no white flash - it matches the in-app RedAlarm splash.
 presplash.filename = %(source.dir)s/presplash2.png
 android.presplash_color = #000000
-fullscreen = 0
+fullscreen = 1
 
 # API 34 is a safer target for the current python-for-android toolchain.
 android.api = 34
@@ -42,7 +44,7 @@ android.archs = arm64-v8a
 #                                    skins (MIUI/ColorOS/etc.) want this
 #                                    granted before they'll let a
 #                                    backgrounded app pop an activity
-android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,POST_NOTIFICATIONS,SYSTEM_ALERT_WINDOW,VIBRATE,USE_FULL_SCREEN_INTENT,RECEIVE_BOOT_COMPLETED
+android.permissions = WAKE_LOCK,SCHEDULE_EXACT_ALARM,USE_EXACT_ALARM,REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,POST_NOTIFICATIONS,SYSTEM_ALERT_WINDOW,VIBRATE,USE_FULL_SCREEN_INTENT,RECEIVE_BOOT_COMPLETED,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PLAYBACK
 
 # CRITICAL for alarms: without this, Android stacks a new copy of the
 # activity on top every time AlarmManager fires while the app is already
@@ -54,6 +56,7 @@ android.manifest.launch_mode = singleTask
 # showWhenLocked + turnScreenOn on every activity at creation time, and the
 # manifest <application> tag is pointed at it. See RedAlarmApplication.java.
 android.add_src = java_src,android_src
+android.add_resources = android_src/res
 p4a.hook = java_src/manifest_hook.py
 android.extra_manifest_application_arguments = ./extra_manifest_application_arguments.xml
 

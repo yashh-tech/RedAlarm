@@ -1,0 +1,12 @@
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="220dp"
+    android:minHeight="120dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="1800000"
+    android:resizeMode="horizontal|vertical"
+    android:previewImage="@drawable/redalarm_widget_preview"
+    android:previewLayout="@layout/redalarm_clock_widget"
+    android:widgetCategory="home_screen|keyguard"
+    android:initialLayout="@layout/redalarm_clock_widget" />
+

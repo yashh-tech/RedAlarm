@@ -166,6 +166,10 @@ def main():
     state_path = str(config.get("state_path") or "")
     config_path = str(config.get("config_path") or (state_path + ".config" if state_path else ""))
     duration = max(1, int(config.get("duration_sec") or 300))
+    # Allow one second for the ringing Activity to become visible when the
+    # selected auto-dismiss duration is only 1, 2 or 3 seconds.
+    if duration <= 3:
+        duration += 1
     deadline_epoch = float(config.get("deadline_epoch") or (time.time() + duration))
     player = None
     clip_start_position_ms = 0
