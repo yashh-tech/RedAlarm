@@ -80,8 +80,8 @@ def main() -> int:
     if ('AudioAttributes.USAGE_MEDIA if use_media_volume else AudioAttributes.USAGE_ALARM' not in main_text
             or 'load_and_play(path, loop=False, volume=1.0, use_media_volume=True)' not in main_text):
         fail("Sound preview must use full player gain and the device media-volume stream without changing alarm ringing")
-    if any(name not in main_text for name in ("Soft Chime", "Morning Rise", "Triple Pulse", "Deep Beacon", "Bright Wake")):
-        fail("One or more original built-in preview tones are missing")
+    if any(name not in main_text for name in ("Classic Beep", "Soft Breeze", "Gentle Chime", "Pop Alert", "Double Pop")):
+        fail("One or more expected built-in preview tones are missing")
     if "effect_cls=None" in module_text:
         fail("ScrollView must not set effect_cls=None; Kivy calls this value as a class")
     if 'LABEL_WHITE = (1, 1, 1, 1)' not in module_text:

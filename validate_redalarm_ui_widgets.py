@@ -73,9 +73,8 @@ def main() -> int:
             "Global horizontal gestures should not intercept app navigation")
     require("selection_toolbar_height=dp(124)" in main_source,
             "selection toolbar height is too small for its action row")
-    for tone in ('("Pulse",', '("Double Alert",', '("Rising Tone",', '("Digital",',
-                 '("Soft Chime",', '("Morning Rise",', '("Triple Pulse",',
-                 '("Deep Beacon",', '("Bright Wake",'):
+    for tone in ('("Classic Beep",', '("Soft Breeze",', '("Gentle Chime",',
+                 '("Pop Alert",', '("Double Pop",'):
         require(tone in main_source, "built-in tone missing: " + tone)
     print("PASS: Python syntax, fling settings, editor navigation, and persisted toggles")
     require('AudioAttributes.USAGE_MEDIA if use_media_volume else AudioAttributes.USAGE_ALARM' in main_source
