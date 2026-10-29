@@ -40,7 +40,6 @@ def main() -> int:
         "class SoundSelectionPage(BoxLayout):",
         "foreground_color=(1, 1, 1, 1)",
         "LABEL_WHITE = (1, 1, 1, 1)",
-        "effect_cls=None",
         "def _get_line_options(self):",
         "options[\"color\"] = LABEL_WHITE",
         "USE SELECTED SOUND",
@@ -82,8 +81,8 @@ def main() -> int:
     require('AudioAttributes.USAGE_MEDIA if use_media_volume else AudioAttributes.USAGE_ALARM' in main_source
             and 'load_and_play(path, loop=False, volume=1.0, use_media_volume=True)' in main_source,
             "sound previews must use media volume while real alarms retain alarm volume")
-    require(module.count("effect_cls=None") >= 2 and "LABEL_WHITE = (1, 1, 1, 1)" in module,
-            "overscroll effects or pure-white alarm-label text are not configured")
+    require("effect_cls=None" not in module and "LABEL_WHITE = (1, 1, 1, 1)" in module,
+            "ScrollView effect_cls must not be None; pure-white alarm-label text must remain configured")
     for marker in ("def _animate_selection_toolbar", "selection_reveal = NumericProperty",
                    "neon_glow = NumericProperty", "def copy_selected", "def confirm_delete_selected"):
         require(marker in main_source, "animated multi-select marker missing: " + marker)

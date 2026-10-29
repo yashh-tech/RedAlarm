@@ -82,13 +82,13 @@ def main() -> int:
         fail("Sound preview must use full player gain and the device media-volume stream without changing alarm ringing")
     if any(name not in main_text for name in ("Soft Chime", "Morning Rise", "Triple Pulse", "Deep Beacon", "Bright Wake")):
         fail("One or more original built-in preview tones are missing")
-    if module_text.count("effect_cls=None") < 2:
-        fail("Edit Alarm and Sound page must disable overscroll effects")
+    if "effect_cls=None" in module_text:
+        fail("ScrollView must not set effect_cls=None; Kivy calls this value as a class")
     if 'LABEL_WHITE = (1, 1, 1, 1)' not in module_text:
         fail("Alarm-label text must use pure white")
     if "AlarmContextMenu(" in main_text or "     def _fire_long_press(self, touch):" in main_text:
         fail("A malformed/undefined long-press context-menu regression remains")
-    print("PASS: media-volume sound previews, built-in tones, no overscroll, readable label, and long-press syntax")
+    print("PASS: media-volume sound previews, built-in tones, valid ScrollView configuration, readable label, and long-press syntax")
 
     notif_start = main_text.find("def android_show_next_alarm_notification")
     notif_end = main_text.find("def android_cancel_next_alarm_notification", notif_start)
