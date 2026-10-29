@@ -2003,7 +2003,7 @@ class AlarmAppSettingsPage(BoxLayout):
         self.card.add_widget(label_block)
         self.card.add_widget(self._separator())
 
-        scroll = ScrollView(effect_cls=None, do_scroll_x=False, do_scroll_y=True, bar_width=0,
+        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=0,
                             scroll_type=["content"], size_hint=(1, 1), scroll_y=1.0)
         self.content = BoxLayout(orientation="vertical", size_hint_y=None,
                                  spacing=dp(5), padding=(0, dp(3), 0, dp(4)))
@@ -2229,7 +2229,7 @@ class SoundSelectionPage(BoxLayout):
                           halign="left", valign="middle")
         self.note.bind(size=lambda w, v: setattr(w, "text_size", v))
         self.add_widget(self.note)
-        scroll = ScrollView(effect_cls=None, do_scroll_x=False, do_scroll_y=True, bar_width=dp(2))
+        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(2))
         self.choices = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(7),
                                  padding=(0, dp(2), 0, dp(2)))
         self.choices.bind(minimum_height=self.choices.setter("height"))
