@@ -21,8 +21,6 @@ public class RedAlarmClockWidgetProvider extends AppWidgetProvider {
             RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.redalarm_clock_widget);
             views.setTextViewText(R.id.redalarm_next_alarm_text, RedAlarmWidgetData.alarmTimeText(context, false));
             views.setTextViewText(R.id.redalarm_next_alarm_label, RedAlarmWidgetData.alarmLabelText(context, false));
-            views.setTextViewText(R.id.redalarm_second_alarm_text, RedAlarmWidgetData.alarmTimeText(context, true));
-            views.setTextViewText(R.id.redalarm_second_alarm_label, RedAlarmWidgetData.alarmLabelText(context, true));
             RedAlarmWidgetData.bindLaunch(context, views, R.id.redalarm_clock_widget_root, 7301 + id);
             manager.updateAppWidget(id, views);
         }

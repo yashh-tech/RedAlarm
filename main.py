@@ -3377,6 +3377,7 @@ class RedAlarmApp(App):
         self.title = APP_TITLE
         self._queued_intents = []
         self._startup_started = time.monotonic()
+        self._main_ui_shown = False
         Window.bind(on_keyboard=self._on_keyboard)
         Window.bind(on_request_close=self._on_request_close)
 
@@ -3407,6 +3408,43 @@ class RedAlarmApp(App):
     
 
     def _finish_startup(self, dt):
+        """Keep startup errors from leaving the app permanently on its splash."""
+        try:
+            self._finish_startup_impl(dt)
+        except Exception as exc:
+            self._record_startup_exception(exc)
+            if getattr(self, "_pending_root", None) is not None:
+                self._show_main_ui(0)
+            else:
+                self._show_startup_failure(exc)
+        return False
+
+    def _record_startup_exception(self, exc):
+        try:
+            with open(self.crash_log_path, "a", encoding="utf-8") as stream:
+                stream.write("\n---- STARTUP FAILURE {} ----\n".format(datetime.datetime.now()))
+                traceback.print_exception(type(exc), exc, exc.__traceback__, file=stream)
+        except Exception:
+            pass
+        print("[RedAlarm] startup failure: {}: {}".format(type(exc).__name__, exc))
+
+    def _show_startup_failure(self, exc):
+        try:
+            self._splash.show_startup_error(
+                "{}: {}".format(type(exc).__name__, exc), self._retry_startup
+            )
+        except Exception as splash_exc:
+            print("[RedAlarm] could not render startup error: {}".format(splash_exc))
+
+    def _retry_startup(self):
+        self._ready = False
+        self._pending_root = None
+        self.root = None
+        self._main_ui_shown = False
+        self._splash.clear_startup_error()
+        Clock.schedule_once(self._finish_startup, 0.1)
+
+    def _finish_startup_impl(self, dt):
         Builder.load_file("alarm.kv")
         self.store = AlarmStore(os.path.join(self.user_data_dir, "alarms.json"))
         self.ringtone_cache_dir = os.path.join(self.user_data_dir, "ringtones")
@@ -3426,61 +3464,83 @@ class RedAlarmApp(App):
         self.root = root
         self._ready = True
 
-        # ---- alarm recovery: NOT deferred any further than this ----
-        if not os.path.exists(self.default_ringtone_path):
-            # first run only; needed before anything can ring/preview
-            self.default_ringtone_path = ensure_default_ringtone(self.ringtone_cache_dir)
-        if ANDROID:
-            try:
-                android_ensure_ring_channel()
-            except Exception as exc:
-                print("[RedAlarm] notification channel error:", exc)
-            try:
-                android_ensure_next_alarm_channel()
-            except Exception as exc:
-                print("[RedAlarm] next-alarm notification channel error:", exc)
-            try:
-                android_request_runtime_permissions()
-            except Exception as exc:
-                print("[RedAlarm] permission request error:", exc)
-
-        for alarm in self.store.all():
-            if alarm.get("enabled", True):
-                try:
-                    self.scheduler.schedule(alarm)
-                except Exception as exc:
-                    # A single bad record must never stop every alarm after
-                    # it in this list from being armed too.
-                    print("[RedAlarm] could not schedule alarm {}: {}"
-                          .format(alarm.get("id"), exc))
-
-        if ANDROID:
-            self._refresh_next_alarm_notification()
-            self._next_alarm_notification_event = Clock.schedule_interval(
-                self._refresh_next_alarm_notification, 60.0
-            )
-
-        self._check_incoming_alarm()
-        queued, self._queued_intents = self._queued_intents, []
-        for args in queued:
-            self._dispatch_intent(*args)
-
-        # Keep the splash visible for one second from app startup.
+        # Build the visible UI first. Alarm recovery and Android permission
+        # work run just after the screen swap, so they cannot strand the splash.
         remaining = max(
             0.0,
             1.0 - (time.monotonic() - self._startup_started)
         )
         Clock.schedule_once(self._show_main_ui, remaining)
+        Clock.schedule_once(self._finish_startup_services, remaining + 0.05)
+
+    def _finish_startup_services(self, dt):
+        """Arm stored alarms and refresh Android services after the UI is visible."""
+        try:
+            # ---- alarm recovery: NOT deferred any further than this ----
+            if not os.path.exists(self.default_ringtone_path):
+                # first run only; needed before anything can ring/preview
+                self.default_ringtone_path = ensure_default_ringtone(self.ringtone_cache_dir)
+            if ANDROID:
+                try:
+                    android_ensure_ring_channel()
+                except Exception as exc:
+                    print("[RedAlarm] notification channel error:", exc)
+                try:
+                    android_ensure_next_alarm_channel()
+                except Exception as exc:
+                    print("[RedAlarm] next-alarm notification channel error:", exc)
+                try:
+                    android_request_runtime_permissions()
+                except Exception as exc:
+                    print("[RedAlarm] permission request error:", exc)
+
+            for alarm in self.store.all():
+                if alarm.get("enabled", True):
+                    try:
+                        self.scheduler.schedule(alarm)
+                    except Exception as exc:
+                        # A single bad record must never stop every alarm after
+                        # it in this list from being armed too.
+                        print("[RedAlarm] could not schedule alarm {}: {}"
+                              .format(alarm.get("id"), exc))
+
+            if ANDROID:
+                self._refresh_next_alarm_notification()
+                self._next_alarm_notification_event = Clock.schedule_interval(
+                    self._refresh_next_alarm_notification, 60.0
+                )
+
+            self._check_incoming_alarm()
+            queued, self._queued_intents = self._queued_intents, []
+            for args in queued:
+                self._dispatch_intent(*args)
+        except Exception as exc:
+            self._record_startup_exception(exc)
+        return False
 
     def _show_main_ui(self, dt):
+        if getattr(self, "_main_ui_shown", False):
+            return False
         root = getattr(self, "_pending_root", None)
         if root is None:
-            return
+            return False
 
-        Window.remove_widget(self._splash)
-        Window.add_widget(root)
+        try:
+            if getattr(self._splash, "parent", None) is Window:
+                Window.remove_widget(self._splash)
+            if getattr(root, "parent", None) is None:
+                Window.add_widget(root)
+            self._main_ui_shown = True
+        except Exception as exc:
+            self._record_startup_exception(exc)
+            return False
+
         if ANDROID:
-            self.refresh_next_alarm_notification()
+            try:
+                self.refresh_next_alarm_notification()
+            except Exception as exc:
+                self._record_startup_exception(exc)
+        return False
 
 
     # ---- Samsung "Never sleeping apps" guidance (one-time / infrequent) ----
