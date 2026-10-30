@@ -215,7 +215,13 @@ class VectorPlayButton(Button):
         self._sync()
 
     def set_playing(self, value):
-        self.playing = bool(value)
+        value = bool(value)
+        if self.playing == value:
+            return
+        self.playing = value
+        Animation.cancel_all(self, "opacity")
+        self.opacity = 0.72
+        Animation(opacity=1.0, duration=0.18, t="out_quad").start(self)
 
     def _sync(self, *_):
         x, y = self.pos
@@ -238,10 +244,11 @@ class VectorPlayButton(Button):
         ]
         bar_w = max(dp(2.5), w * 0.095)
         bar_h = h * 0.40
-        self._pause_a.size = (bar_w, bar_h)
-        self._pause_b.size = (bar_w, bar_h)
-        self._pause_a.pos = (x + w * 0.36, cy - bar_h / 2)
-        self._pause_b.pos = (x + w * 0.55, cy - bar_h / 2)
+        stop_side = min(w, h) * 0.30
+        self._pause_a.size = (stop_side, stop_side)
+        self._pause_b.size = (0, 0)
+        self._pause_a.pos = (x + (w - stop_side) / 2, cy - stop_side / 2)
+        self._pause_b.pos = (x + w * 0.55, cy - stop_side / 2)
         self._play_color.rgba = TEXT if not self.playing else (0, 0, 0, 0)
         self._pause_color.rgba = TEXT if self.playing else (0, 0, 0, 0)
 
@@ -841,7 +848,10 @@ class AlarmLabelInput(TextInput):
         kwargs["opacity"] = 1
         super().__init__(**kwargs)
         self._apply_readable_colors()
-        self.bind(disabled=self._apply_readable_colors, focus=self._apply_readable_colors, text=self._apply_readable_colors)
+        self.bind(disabled=self._apply_readable_colors, focus=self._apply_readable_colors,
+                  text=self._apply_readable_colors, foreground_color=self._apply_readable_colors,
+                  disabled_foreground_color=self._apply_readable_colors,
+                  hint_text_color=self._apply_readable_colors)
         Clock.schedule_once(self._apply_readable_colors, 0)
         Clock.schedule_once(self._apply_readable_colors, 0.15)
 
@@ -856,7 +866,10 @@ class AlarmLabelInput(TextInput):
     def _apply_readable_colors(self, *_):
         self.foreground_color = LABEL_WHITE
         self.disabled_foreground_color = LABEL_WHITE
-        self.hint_text_color = (1, 1, 1, 1)
+        self.hint_text_color = LABEL_WHITE
+        hint_label = getattr(self, "_hint_text_label", None)
+        if hint_label is not None:
+            hint_label.color = LABEL_WHITE
         # Re-rasterize existing text after restoring the exact requested color.
         self._trigger_refresh_text()
 
@@ -948,7 +961,7 @@ class TimePickerPage(AnchorLayout):
             background_normal="", background_active="",
             background_color=(0, 0, 0, 0),
             foreground_color=LABEL_WHITE, disabled_foreground_color=LABEL_WHITE,
-            hint_text_color=(0.82, 0.82, 0.85, 1),
+            hint_text_color=LABEL_WHITE,
             cursor_color=RED, selection_color=(RED[0], RED[1], RED[2], 0.45),
             font_size=sp(16), padding=(dp(12), dp(8)),
             size_hint_y=None, height=dp(36),
@@ -1391,7 +1404,7 @@ class AlarmEditorMainPage(BoxLayout):
             multiline=False, write_tab=False, background_normal="", background_active="",
             background_color=(0, 0, 0, 0), foreground_color=(1, 1, 1, 1),
             disabled_foreground_color=(1, 1, 1, 1),
-            hint_text_color=(0.82, 0.82, 0.85, 1), cursor_color=(1, 0.16, 0.22, 1),
+            hint_text_color=LABEL_WHITE, cursor_color=(1, 0.16, 0.22, 1),
             disabled=False, opacity=1,
             selection_color=(RED[0], RED[1], RED[2], 0.45),
             font_size=sp(16), padding=(dp(43), dp(8), dp(48), dp(8)),
@@ -1956,16 +1969,16 @@ class AlarmAppSettingsPage(BoxLayout):
 
     def _build(self):
         self.card = RoundedPanel(fill=CARD, radius=dp(26), orientation="vertical",
-                                 padding=(dp(16), dp(12), dp(16), dp(12)),
-                                 spacing=dp(5), size_hint=(1, 1))
+                                 padding=(dp(14), dp(8), dp(14), dp(8)),
+                                 spacing=dp(3), size_hint=(1, 1))
         self.add_widget(self.card)
 
         # Single-page editor: the spinner is fixed above the scrollable settings.
-        header = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(25), spacing=dp(1))
+        header = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(23), spacing=dp(1))
         header.add_widget(self._label("A L A R M   S E T T I N G S", 12.5, SUB, True, dp(22)))
         self.card.add_widget(header)
 
-        self.wheel_panel = WheelPanel(size_hint_y=None, height=dp(228))
+        self.wheel_panel = WheelPanel(size_hint_y=None, height=dp(206))
         self.hour_wheel = SpinnerWheel(
             list(range(1, 13)), self.editor.time_state["hour"],
             lambda value: self._change_time("hour", value),
@@ -1987,7 +2000,7 @@ class AlarmAppSettingsPage(BoxLayout):
         self._sync_wheel_layout()
 
         label_block = BoxLayout(
-            orientation="vertical", size_hint_y=None, height=dp(56), spacing=dp(3)
+            orientation="vertical", size_hint_y=None, height=dp(52), spacing=dp(2)
         )
         label_block.add_widget(self._label("ALARM LABEL", 10.5, SUB, True, dp(16)))
         self.label_input = AlarmLabelInput(
@@ -1996,7 +2009,7 @@ class AlarmAppSettingsPage(BoxLayout):
             background_normal="", background_active="",
             background_color=(0, 0, 0, 0), foreground_color=LABEL_WHITE,
             disabled_foreground_color=LABEL_WHITE,
-            hint_text_color=(0.82, 0.82, 0.85, 1), cursor_color=(1, 0.16, 0.22, 1),
+            hint_text_color=LABEL_WHITE, cursor_color=(1, 0.16, 0.22, 1),
             disabled=False, opacity=1,
             selection_color=(RED[0], RED[1], RED[2], 0.45),
             font_size=sp(16), padding=(dp(12), dp(8)),
@@ -2015,12 +2028,12 @@ class AlarmAppSettingsPage(BoxLayout):
                             scroll_type=["content"], size_hint=(1, 1), scroll_y=1.0,
                             effect_cls=DampedScrollEffect)
         self.content = BoxLayout(orientation="vertical", size_hint_y=None,
-                                 spacing=dp(5), padding=(0, dp(3), 0, dp(4)))
+                                 spacing=dp(3), padding=(0, dp(1), 0, dp(2)))
         self.content.bind(minimum_height=self.content.setter("height"))
         scroll.add_widget(self.content)
         self.card.add_widget(scroll)
 
-        repeat = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(72), spacing=dp(3))
+        repeat = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(68), spacing=dp(2))
         repeat.add_widget(self._label("REPEAT", 11.5, SUB, True, dp(18)))
         repeat.add_widget(self._label("Once if no days are selected", 10.5, TEXT, False, dp(16)))
         day_row = BoxLayout(orientation="horizontal", spacing=dp(5), size_hint_y=None, height=dp(34))
@@ -2034,7 +2047,7 @@ class AlarmAppSettingsPage(BoxLayout):
         self.content.add_widget(self._separator())
 
         sound_block = BoxLayout(
-            orientation="vertical", size_hint_y=None, height=dp(104), spacing=dp(4)
+            orientation="vertical", size_hint_y=None, height=dp(98), spacing=dp(3)
         )
         sound_block.add_widget(self._label("SOUND", 11.5, SUB, True, dp(18)))
 
@@ -2056,8 +2069,8 @@ class AlarmAppSettingsPage(BoxLayout):
         self.sound_name_label.bind(size=lambda w, v: setattr(w, "text_size", v))
         sound_row.add_widget(self.sound_name_label)
         self.preview_button = VectorPlayButton(
-            callback=self.editor.preview_sound,
-            size_hint=(None, None), size=(dp(34), dp(34)),
+            callback=self.editor.toggle_preview_sound,
+            size_hint=(None, None), size=(dp(42), dp(42)),
         )
         sound_row.add_widget(self.preview_button)
         sound_block.add_widget(sound_row)
@@ -2069,7 +2082,7 @@ class AlarmAppSettingsPage(BoxLayout):
         self.content.add_widget(sound_block)
 
         volume_row = BoxLayout(orientation="horizontal", spacing=dp(8),
-                               size_hint_y=None, height=dp(44))
+                               size_hint_y=None, height=dp(40))
         speaker_holder = AnchorLayout(anchor_x="center", anchor_y="center", size_hint=(None, 1), width=dp(27))
         speaker_holder.add_widget(SpeakerIcon(color=SUB, size=(dp(25), dp(24))))
         volume_row.add_widget(speaker_holder)
@@ -2091,7 +2104,7 @@ class AlarmAppSettingsPage(BoxLayout):
         self.content.add_widget(self._separator())
 
         vibration = BoxLayout(orientation="horizontal", spacing=dp(8),
-                              size_hint_y=None, height=dp(40))
+                              size_hint_y=None, height=dp(36))
         vib_holder = AnchorLayout(anchor_x="center", anchor_y="center", size_hint=(None, 1), width=dp(28))
         vib_holder.add_widget(VibrationIcon(color=SUB, size=(dp(23), dp(25))))
         vibration.add_widget(vib_holder)
@@ -2112,7 +2125,7 @@ class AlarmAppSettingsPage(BoxLayout):
             "SNOOZE", "Repeat alarm after", int(self.editor.snooze_sec),
             3, 3600, lambda val: setattr(self.editor, "snooze_sec", val),
             icon=SnoozeIcon,
-            size_hint_y=None, height=dp(58),
+            size_hint_y=None, height=dp(54),
         )
         self.content.add_widget(self.snooze_control)
         self.content.add_widget(self._separator())
@@ -2120,14 +2133,14 @@ class AlarmAppSettingsPage(BoxLayout):
             "AUTO-DISMISS", "Stop alarm automatically", int(self.editor.auto_dismiss_sec),
             1, 3600, lambda val: setattr(self.editor, "auto_dismiss_sec", val),
             icon=AutoDismissIcon,
-            size_hint_y=None, height=dp(58),
+            size_hint_y=None, height=dp(54),
         )
         self.content.add_widget(self.dismiss_control)
         self.content.add_widget(self._separator())
         self.error_label = self._label("", 11.5, RED, False, dp(20))
         self.content.add_widget(self.error_label)
 
-        self.footer = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(46), spacing=dp(10))
+        self.footer = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(44), spacing=dp(10))
         self.footer.add_widget(RoundedActionButton("BACK", callback=self.on_back, accent=False))
         self.delete_button = RoundedActionButton(
             "DELETE", callback=self.editor.delete_alarm, accent=False,
@@ -2227,6 +2240,7 @@ class SoundSelectionPage(BoxLayout):
         super().__init__(orientation="vertical", padding=(dp(16), dp(14)), spacing=dp(8), **kwargs)
         self.editor = editor
         self.on_back = on_back
+        self.preview_controls = []
         top = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(44), spacing=dp(8))
         top.add_widget(RoundedActionButton("‹ BACK", callback=self._back, accent=False,
                                            size_hint=(None, None), size=(dp(86), dp(40))))
@@ -2236,12 +2250,13 @@ class SoundSelectionPage(BoxLayout):
                                    font_size=sp(12), size_hint_y=None, height=dp(23), halign="left")
         self.current_label.bind(size=lambda w, v: setattr(w, "text_size", v))
         self.add_widget(self.current_label)
-        self.note = Label(text="Tap PREVIEW to listen. Using a sound is a separate action.",
-                          color=SUB, font_size=sp(10.5), size_hint_y=None, height=dp(28),
+        self.note = Label(text="Preview uses phone MEDIA volume. RING LEVEL sets saved alarm loudness.",
+                          color=SUB, font_size=sp(10.5), size_hint_y=None, height=dp(38),
                           halign="left", valign="middle")
         self.note.bind(size=lambda w, v: setattr(w, "text_size", v))
         self.add_widget(self.note)
-        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(2))
+        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(2),
+                            effect_cls=DampedScrollEffect)
         self.choices = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(7),
                                  padding=(0, dp(2), 0, dp(2)))
         self.choices.bind(minimum_height=self.choices.setter("height"))
@@ -2250,7 +2265,7 @@ class SoundSelectionPage(BoxLayout):
         volume_row = BoxLayout(orientation="horizontal", spacing=dp(8),
                                size_hint_y=None, height=dp(44))
         volume_row.add_widget(SpeakerIcon(color=TEXT, size=(dp(24), dp(24))))
-        volume_row.add_widget(Label(text="ALARM VOLUME", color=SUB, font_size=sp(10), bold=True,
+        volume_row.add_widget(Label(text="RING LEVEL", color=SUB, font_size=sp(10), bold=True,
                                     size_hint=(None, 1), width=dp(91)))
         self.volume_control = VolumeControl(value=float(self.editor.volume), size_hint=(1, 1))
         self.volume_control.bind(value=self._volume_changed)
@@ -2288,42 +2303,72 @@ class SoundSelectionPage(BoxLayout):
         )
         row = BoxLayout(
             orientation="horizontal", spacing=dp(7), size_hint_y=None,
-            height=dp(50), padding=(dp(8), dp(5)),
+            height=dp(58), padding=(dp(8), dp(5)),
         )
         add_rounded_background(
             row, (0.045, 0.045, 0.052, 1), radius=13,
-            edge=(RED[0], RED[1], RED[2], 0.80 if selected else 0.35), edge_width=1.0,
+            edge=(RED[0], RED[1], RED[2], 0.92 if selected else 0.35), edge_width=1.0,
         )
         label = Label(
             text=("[x]  " if selected else "[ ]  ") + str(name),
-            color=(1, 0.28, 0.36, 1) if selected else TEXT,
-            bold=selected, font_size=sp(12), halign="left", valign="middle",
-            size_hint=(1, 1),
+            color=TEXT, bold=selected, font_size=sp(12),
+            halign="left", valign="middle", size_hint=(1, 1),
         )
         label.bind(size=lambda w, v: setattr(w, "text_size", v))
         row.add_widget(label)
-        row.add_widget(RoundedActionButton(
-            "PREVIEW", callback=lambda p=preview_path: self.editor.preview_sound(path=p, duration=8.0),
-            accent=False, size_hint=(None, None), size=(dp(75), dp(38)),
-        ))
+        preview_button = VectorPlayButton(
+            callback=lambda n=name, spath=select_path, p=preview_path:
+                self._toggle_preview(n, spath, p),
+            accent=selected, size_hint=(None, None), size=(dp(48), dp(48)),
+        )
+        row.add_widget(preview_button)
+        self.preview_controls.append((preview_button, str(preview_path or select_path or "")))
         row.add_widget(RoundedActionButton(
             "USE", callback=lambda n=name, p=select_path: self._candidate(n, p),
-            accent=selected, size_hint=(None, None), size=(dp(58), dp(38)),
+            accent=selected, size_hint=(None, None), size=(dp(62), dp(46)),
         ))
         self.choices.add_widget(row)
+
+    def _toggle_preview(self, name, select_path, preview_path):
+        path = str(preview_path or select_path or "")
+        if not path:
+            path = str(getattr(App.get_running_app(), "default_ringtone_path", "") or "")
+        if not path:
+            self.note.text = "This sound has no playable file. Choose another tone or local file."
+            return
+        self.editor.toggle_preview_sound(path=path, duration=30.0)
+
+    def set_preview_playing(self, path, playing):
+        active = str(path or "") if playing else ""
+        for button, button_path in self.preview_controls:
+            button.set_playing(bool(active and button_path == active))
+
     def refresh(self):
-        # Refresh after navigation so the ScrollView has its final layout.
+        # Rebuild after navigation. A picked local track is shown FIRST so it
+        # cannot be hidden below the built-in tones in the scroll area.
         try:
             self.volume_control.value = float(self.editor.volume)
         except (TypeError, ValueError):
             pass
         self.choices.clear_widgets()
-        candidate_name = str(self.editor._sound_candidate_name or "Default beep")
-        self.current_label.text = "Candidate: {}  ·  press USE SELECTED SOUND to return".format(candidate_name)
+        self.preview_controls = []
+        candidate_name = str(self.editor._sound_candidate_name or "Classic Beep")
+        candidate_path = str(self.editor._sound_candidate_path or "")
+        self.current_label.text = "Selected sound: {}".format(candidate_name)
 
         app = App.get_running_app()
         default_path = str(getattr(app, "default_ringtone_path", "") or "")
         seen_paths = set()
+
+        # Put the current file/candidate at the top. The name passed to _add_choice
+        # exactly matches the saved candidate name, so the selected marker is correct.
+        if candidate_path and os.path.isfile(candidate_path):
+            try:
+                self._add_choice(candidate_name, candidate_path, candidate_path)
+                seen_paths.add(candidate_path)
+            except Exception as exc:
+                print("[RedAlarm] selected candidate row failed:", exc)
+
         try:
             self._add_choice("Classic Beep", "", default_path)
             if default_path:
@@ -2347,13 +2392,6 @@ class SoundSelectionPage(BoxLayout):
             except Exception as exc:
                 print("[RedAlarm] ringtone row failed:", name, exc)
 
-        candidate_path = str(self.editor._sound_candidate_path or "")
-        if candidate_path and candidate_path not in seen_paths:
-            try:
-                self._add_choice("Local: " + candidate_name, candidate_path, candidate_path)
-            except Exception as exc:
-                print("[RedAlarm] selected local ringtone row failed:", exc)
-
         if not self.choices.children:
             fallback = Label(
                 text="No built-in tones available.\nUse BROWSE LOCAL MUSIC below.",
@@ -2362,12 +2400,11 @@ class SoundSelectionPage(BoxLayout):
             )
             fallback.bind(size=lambda w, v: setattr(w, "text_size", v))
             self.choices.add_widget(fallback)
-            self.note.text = "Built-in tones are unavailable; local music browsing remains available."
-        elif builtin_choices:
-            self.note.text = "Tap PREVIEW to listen at the selected alarm volume. USE applies the sound."
-        else:
-            self.note.text = "Default beep remains available. BROWSE LOCAL MUSIC opens your files."
 
+        if candidate_path and os.path.isfile(candidate_path):
+            self.note.text = "Local file selected. Tap Play to preview, Stop to end, then USE SELECTED SOUND to apply."
+        else:
+            self.note.text = "Preview follows phone MEDIA volume. RING LEVEL sets the saved alarm loudness."
 
 class AlarmEditorUI(ScreenManager):
     """Single-page alarm editor with the time wheel and settings together."""

@@ -43,7 +43,7 @@ def main() -> int:
         "def _get_line_options(self):",
         "options[\"color\"] = LABEL_WHITE",
         "USE SELECTED SOUND",
-        "self.editor.preview_sound(path=p, duration=8.0)",
+        "self.editor.toggle_preview_sound(path=path, duration=30.0)",
     ):
         require(marker in module, "time-picker/editor marker missing: " + marker)
     for marker in (
@@ -58,14 +58,24 @@ def main() -> int:
     require('text: "CANCEL" if root.selection_mode else "SELECT"' in (ROOT / "alarm.kv").read_text(encoding="utf-8"),
             "alarm-list SELECT/CANCEL control is missing")
     kv_source = (ROOT / "alarm.kv").read_text(encoding="utf-8")
-    require('size: dp(136), dp(48)' in kv_source and
+    require('size_hint: 1, None' in kv_source and
             'on_release: root.toggle_selection_mode()' in kv_source and
             "def toggle_selection_mode(self):" in main_source,
             "SELECT/CANCEL tap handling is not wired to the large touch target")
+    require('id: alarms_scroll' in kv_source and
+            'def _capture_list_scroll_offset(self):' in main_source and
+            'width: dp(30)' in kv_source and
+            'opacity: root.selection_reveal' in kv_source,
+            "Alarm list must keep its scroll position and row width stable")
     require("percent_text = StringProperty" in module and
             "self.editor.set_alarm_volume(value)" in module and
             "load_and_play(path, loop=False, volume=1.0, use_media_volume=True)" in main_source,
             "Alarm-volume slider and media-stream sound preview wiring are missing")
+    require("def toggle_preview_sound(" in main_source and
+            "def set_preview_playing(" in module and
+            "Local file selected." in module and
+            "preview_button.set_playing" in main_source,
+            "Local music selection and animated Play/Stop controls are missing")
     root_manager_text = main_source.split("class RootManager(ScreenManager):", 1)[1].split(
         "# ======================================================================\n# 5. APP", 1
     )[0]

@@ -241,7 +241,7 @@ def main() -> int:
         fail("Tapping/holding a checkbox must not conflict with the row long-press timer")
     legacy_checkbox_markers = ("width: dp(30) if root.selection_mode else 0" in kv_text
                               and "opacity: 1 if root.selection_mode else 0" in kv_text)
-    animated_checkbox_markers = ("width: dp(30) * root.selection_reveal" in kv_text
+    animated_checkbox_markers = ("width: dp(30)" in kv_text
                                 and "opacity: root.selection_reveal" in kv_text
                                 and "selection_reveal = NumericProperty(0.0)" in main_text)
     if not (legacy_checkbox_markers or animated_checkbox_markers):
@@ -267,10 +267,13 @@ def main() -> int:
         fail("Alarm label must force #F9F9F9 on Kivy's rendered text lines")
     if 'text: "CANCEL" if root.selection_mode else "SELECT"' not in kv_text or "def start_selection(self):" not in main_text:
         fail("Alarm list must provide an explicit Select control that opens empty selection mode")
-    if ('size: dp(136), dp(48)' not in kv_text
+    if ('size_hint: 1, None' not in kv_text or 'height: dp(52)' not in kv_text
             or 'on_release: root.toggle_selection_mode()' not in kv_text
             or "def toggle_selection_mode(self):" not in main_text):
         fail("Select control must toggle selection mode on a completed tap")
+    if ('height: dp(52)' not in kv_text
+            or 'size_hint: 1, None' not in kv_text):
+        fail("Select control must occupy the full available width")
     if ("percent_text = StringProperty" not in module_text
             or "def set_alarm_volume(self, value):" not in main_text
             or "load_and_play(path, loop=False, volume=1.0, use_media_volume=True)" not in main_text):
