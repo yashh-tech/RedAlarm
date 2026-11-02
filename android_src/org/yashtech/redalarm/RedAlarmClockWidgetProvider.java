@@ -27,7 +27,7 @@ public class RedAlarmClockWidgetProvider extends AppWidgetProvider {
     private static final int TICK_REQUEST_CODE = 7601;
 
     private static final float WIDE_MIN_WIDTH_DP = 220f;
-    private static final float LARGE_MIN_HEIGHT_DP = 100f;
+    private static final float LARGE_MIN_HEIGHT_DP = 110f;
 
     @Override public void onUpdate(Context context, AppWidgetManager manager, int[] ids) {
         for (int id : ids) updateWidget(context, manager, id);

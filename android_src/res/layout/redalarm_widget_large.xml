@@ -24,23 +24,34 @@
             android:orientation="horizontal"
             android:gravity="center_vertical">
             <ImageView
-                android:layout_width="26dp"
-                android:layout_height="26dp"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
                 android:src="@drawable/redalarm_widget_icon"
                 android:contentDescription="RedAlarm" />
-            <ImageView
-                android:layout_width="1dp"
-                android:layout_height="20dp"
-                android:layout_marginStart="9dp"
-                android:layout_marginEnd="9dp"
-                android:background="#5A1218"
-                android:contentDescription="" />
-            <TextView
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Live Clock"
-                android:textColor="#B9B9BE"
-                android:textSize="12sp" />
+                android:layout_marginStart="8dp"
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:text="Next Alarm In"
+                    android:textColor="#D81722"
+                    android:textSize="9.5sp"
+                    android:textStyle="bold" />
+                <Chronometer
+                    android:id="@+id/ra_countdown_live"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
         </LinearLayout>
         <LinearLayout
             android:layout_width="wrap_content"
@@ -56,7 +67,7 @@
                 android:includeFontPadding="false"
                 android:maxLines="1"
                 android:textColor="#FFFFFF"
-                android:textSize="34sp"
+                android:textSize="31sp"
                 android:textStyle="bold" />
             <TextClock
                 android:layout_width="wrap_content"
@@ -81,26 +92,6 @@
             android:maxLines="1"
             android:textColor="#B9B9BE"
             android:textSize="13sp" />
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="2dp"
-            android:layout_marginTop="4dp"
-            android:maxLines="1"
-            android:text="Next Alarm In"
-            android:textColor="#D81722"
-            android:textSize="10.5sp"
-            android:textStyle="bold" />
-        <Chronometer
-            android:id="@+id/ra_countdown_live"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="2dp"
-            android:includeFontPadding="false"
-            android:maxLines="1"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp"
-            android:textStyle="bold" />
     </LinearLayout>
 
     <ImageView
