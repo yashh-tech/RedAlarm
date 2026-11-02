@@ -31,6 +31,7 @@ from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.effects.dampedscroll import DampedScrollEffect
+from kivy.effects.scroll import ScrollEffect
 from kivy.uix.textinput import TextInput
 from kivy.graphics import Color, Ellipse, Line, RoundedRectangle, Rectangle, Triangle
 
@@ -1941,6 +1942,22 @@ class DurationRow(BoxLayout):
 
 
 
+REPEAT_DAY_SHORT = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+REPEAT_DAY_FULL = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def repeat_summary_text(days_selected):
+    """Human repeat summary for a Monday-first list of seven booleans."""
+    picked = [i for i, on in enumerate(list(days_selected or [])[:7]) if on]
+    if not picked:
+        return "Once"
+    if len(picked) == 7:
+        return "Every day"
+    if len(picked) == 1:
+        return "Every " + REPEAT_DAY_FULL[picked[0]]
+    return "Every " + ", ".join(REPEAT_DAY_SHORT[i] for i in picked)
+
+
 class AlarmAppSettingsPage(BoxLayout):
     """Compact settings page wired directly to the real AlarmEditScreen."""
     DAYS = [("M", "Mon"), ("T", "Tue"), ("W", "Wed"),
@@ -2001,7 +2018,7 @@ class AlarmAppSettingsPage(BoxLayout):
         self._sync_wheel_layout()
 
         label_block = BoxLayout(
-            orientation="vertical", size_hint_y=None, height=dp(52), spacing=dp(2)
+            orientation="vertical", size_hint_y=None, height=dp(84), spacing=dp(3)
         )
         label_block.add_widget(self._label("ALARM LABEL", 10.5, SUB, True, dp(16)))
         self.label_input = AlarmLabelInput(
@@ -2022,21 +2039,34 @@ class AlarmAppSettingsPage(BoxLayout):
         )
         self.label_input.bind(text=self._label_changed)
         label_block.add_widget(self.label_input)
+        self.repeat_summary = Label(
+            text=repeat_summary_text(self.editor.days_selected), color=LABEL_WHITE,
+            font_size=sp(12.5), bold=True, halign="left", valign="middle",
+            padding=(dp(12), 0), shorten=True, shorten_from="right",
+            size_hint_y=None, height=dp(26),
+        )
+        self.repeat_summary.bind(size=lambda w, v: setattr(w, "text_size", v))
+        add_rounded_background(
+            self.repeat_summary, (0.16, 0.03, 0.04, 1), radius=10,
+            edge=(0.86, 0.10, 0.14, 0.55), edge_width=1.0,
+        )
+        label_block.add_widget(self.repeat_summary)
         self.card.add_widget(label_block)
         self.card.add_widget(self._separator())
+        self.editor.bind(days_selected=lambda *_: self.refresh_repeat_summary())
 
+        # Clamped at the top: pulling down must not open a gap above REPEAT.
         scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=0,
                             scroll_type=["content"], size_hint=(1, 1), scroll_y=1.0,
-                            effect_cls=DampedScrollEffect)
+                            effect_cls=ScrollEffect)
         self.content = BoxLayout(orientation="vertical", size_hint_y=None,
                                  spacing=dp(3), padding=(0, dp(1), 0, dp(2)))
         self.content.bind(minimum_height=self.content.setter("height"))
         scroll.add_widget(self.content)
         self.card.add_widget(scroll)
 
-        repeat = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(68), spacing=dp(2))
+        repeat = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(54), spacing=dp(2))
         repeat.add_widget(self._label("REPEAT", 11.5, SUB, True, dp(18)))
-        repeat.add_widget(self._label("Once if no days are selected", 10.5, TEXT, False, dp(16)))
         day_row = BoxLayout(orientation="horizontal", spacing=dp(5), size_hint_y=None, height=dp(34))
         for index, (short, full) in enumerate(self.DAYS):
             button = DayPill(text=short, height=dp(34), size_hint=(1, None))
@@ -2217,6 +2247,10 @@ class AlarmAppSettingsPage(BoxLayout):
             desired = "down" if self.editor.days_selected[i] else "normal"
             if button.state != desired:
                 button.state = desired
+        self.refresh_repeat_summary()
+
+    def refresh_repeat_summary(self):
+        self.repeat_summary.text = repeat_summary_text(self.editor.days_selected)
 
     def refresh_from_editor(self):
         self.refresh_time()

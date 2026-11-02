@@ -14,10 +14,13 @@ def main() -> int:
     module_path = ROOT / "redalarm_timepicker.py"
     main_path = ROOT / "main.py"
     provider_path = ROOT / "android_src/org/yashtech/redalarm/RedAlarmClockWidgetProvider.java"
-    widget_layout_path = ROOT / "android_src/res/layout/redalarm_clock_widget.xml"
+    widget_layout_paths = {
+        name: ROOT / ("android_src/res/layout/redalarm_widget_%s.xml" % name)
+        for name in ("large", "wide", "square")
+    }
     widget_info_path = ROOT / "android_src/res/xml/redalarm_clock_widget_info.xml"
     manifest_hook_path = ROOT / "java_src/manifest_hook.py"
-    for path in (module_path, main_path, provider_path, widget_layout_path,
+    for path in (module_path, main_path, provider_path, *widget_layout_paths.values(),
                  widget_info_path, manifest_hook_path):
         require(path.is_file(), "missing required file: " + str(path.relative_to(ROOT)))
 
@@ -76,6 +79,10 @@ def main() -> int:
             "Local file selected." in module and
             "preview_button.set_playing" in main_source,
             "Local music selection and animated Play/Stop controls are missing")
+    require("def repeat_summary_text(days_selected):" in module
+            and "self.editor.bind(days_selected=lambda *_: self.refresh_repeat_summary())" in module
+            and "Once if no days are selected" not in module,
+            "Edit Alarm must show a live repeat summary under the label")
     root_manager_text = main_source.split("class RootManager(ScreenManager):", 1)[1].split(
         "# ======================================================================\n# 5. APP", 1
     )[0]
@@ -107,33 +114,45 @@ def main() -> int:
             "splash must not report Ready before the actual app is displayed")
 
     provider = provider_path.read_text(encoding="utf-8")
-    layout = widget_layout_path.read_text(encoding="utf-8")
+    layouts = {name: path.read_text(encoding="utf-8") for name, path in widget_layout_paths.items()}
     info = widget_info_path.read_text(encoding="utf-8")
     hook = manifest_hook_path.read_text(encoding="utf-8")
-    require("RedAlarmWidgetData.alarmTimeText(context, false)" in provider
-            and "RedAlarmWidgetData.alarmLabelText(context, false)" in provider
-            and "redalarm_second_alarm_text" not in provider
-            and "redalarm_second_alarm_label" not in provider,
-            "compact widget must bind only the next alarm and label")
-    for marker in ("has_next_alarm", "next_alarm_at", "next_alarm_label", "alarmTimeText", "alarmLabelText"):
-        require(marker in (ROOT / "android_src/org/yashtech/redalarm/RedAlarmWidgetData.java").read_text(encoding="utf-8"),
-                "next-alarm widget data marker missing: " + marker)
-    for marker in ("@+id/redalarm_next_alarm_text", "@+id/redalarm_next_alarm_label"):
-        require(marker in layout, "widget layout is missing an alarm view: " + marker)
-    require("TextClock" in layout and 'android:format12Hour="h:mm a"' in layout
-            and 'android:format24Hour="h:mm a"' in layout,
-            "3x1 widget must show a live digital clock in 12-hour time")
-    require('android:minWidth="180dp"' in info and 'android:minHeight="64dp"' in info,
-            "3x1 widget minimum dimensions must fit a three-cell single row")
-    require('android:targetCellWidth="3"' in info and 'android:targetCellHeight="1"' in info,
-            "widget must be configured as an aligned 3x1 widget")
+    data_source = (ROOT / "android_src/org/yashtech/redalarm/RedAlarmWidgetData.java").read_text(encoding="utf-8")
+    for marker in ("R.layout.redalarm_widget_large", "R.layout.redalarm_widget_wide",
+                   "R.layout.redalarm_widget_square", "new RemoteViews(bySize)",
+                   "onAppWidgetOptionsChanged", "RedAlarmWidgetData.countdownText(context)",
+                   "RedAlarmWidgetData.alarmTimeText(context, true)"):
+        require(marker in provider, "adaptive widget provider marker missing: " + marker)
+    for marker in ("has_next_alarm", "next_alarm_at", "next_alarm_label", "next_alarm_days",
+                   "alarmTimeText", "alarmLabelText", "alarmDaysText", "countdownText"):
+        require(marker in data_source, "widget data marker missing: " + marker)
+    require('"next_alarm_days"' in main_source and "def widget_days_mask(days):" in main_source,
+            "Python must publish the alarm repeat days for the widget")
+    expected_ids = {
+        "large": ("ra_clock_time", "ra_next_time", "ra_next_label", "ra_next_days",
+                  "ra_second_time", "ra_second_label", "ra_second_days"),
+        "wide": ("ra_clock_time", "ra_next_time", "ra_next_days"),
+        "square": ("ra_countdown", "ra_next_time", "ra_next_label", "ra_next_days"),
+    }
+    for name, ids in expected_ids.items():
+        require('android:id="@+id/ra_widget_root"' in layouts[name],
+                name + " widget layout is missing its tap target")
+        for view_id in ids:
+            require('@+id/%s"' % view_id in layouts[name],
+                    "%s widget layout is missing %s" % (name, view_id))
+        require("<View" not in layouts[name], name + " widget uses a View, which RemoteViews rejects")
+    require('android:targetCellWidth="4"' in info and 'android:targetCellHeight="2"' in info
+            and 'android:minResizeWidth="100dp"' in info,
+            "widget must default to 4x2 and not shrink below two cells wide")
+    require(not (ROOT / "android_src/res/layout/redalarm_clock_widget.xml").exists(),
+            "old 3x1 widget layout still exists")
     require("RedAlarmNextAlarmWidgetProvider" not in hook,
             "obsolete separate upcoming-alarm widget is still registered")
     require(not (ROOT / "android_src/org/yashtech/redalarm/RedAlarmNextAlarmWidgetProvider.java").exists(),
             "obsolete separate widget Java provider still exists")
     require(not (ROOT / "android_src/res/layout/redalarm_next_alarm_widget.xml").exists(),
             "obsolete separate widget layout still exists")
-    print("PASS: compact 3x1 live-clock/next-alarm widget and launcher preview")
+    print("PASS: adaptive 4x2 / 4x1 / 2x2 widget and launcher preview")
     print("Static checks passed. Android build and touch behavior still need device testing.")
     return 0
 
