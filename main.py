@@ -113,6 +113,12 @@ def compute_next_trigger_dt(alarm, now=None):
     return now + datetime.timedelta(days=7)
 
 
+def widget_days_mask(days):
+    """Monday-first repeat flags -> Sunday-first "0101010" string used by the widget."""
+    flags = [bool(d) for d in list(days or [])[:7]] + [False] * 7
+    return "".join("1" if on else "0" for on in [flags[6]] + flags[:6])
+
+
 def stable_request_code(alarm_id, salt=""):
     """Deterministic int for Android PendingIntent request codes."""
     digest = hashlib.md5((alarm_id + salt).encode("utf-8")).hexdigest()
@@ -334,7 +340,8 @@ if ANDROID:
         if perms:
             request_permissions(perms)
 
-    def android_update_alarm_widgets(trigger_dt, label="", second_trigger_dt=None, second_label=""):
+    def android_update_alarm_widgets(trigger_dt, label="", second_trigger_dt=None, second_label="",
+                                     days=None, second_days=None):
         """Publish the next two alarm times for display-only home-screen widgets.
 
         This never schedules, cancels, or otherwise controls alarm delivery.
@@ -359,6 +366,9 @@ if ANDROID:
                 edit.putBoolean("has_second_alarm", True)
                 edit.putLong("second_alarm_at", int(second_trigger_dt.timestamp() * 1000))
                 edit.putString("second_alarm_label", JString(str(second_label or "Alarm")))
+            edit.putString("next_alarm_days", JString(widget_days_mask(days) if trigger_dt else ""))
+            edit.putString("second_alarm_days",
+                           JString(widget_days_mask(second_days) if second_trigger_dt else ""))
             edit.apply()
             update = Intent(JString("org.yashtech.redalarm.UPDATE_WIDGETS"))
             update.setPackage(context.getPackageName())
@@ -3709,13 +3719,14 @@ class RedAlarmApp(App):
                     if trigger <= now:
                         continue
                     label = str(alarm.get("label") or "Alarm").strip() or "Alarm"
-                    widget_candidates.append((trigger, label))
+                    widget_candidates.append((trigger, label, alarm.get("days") or [False] * 7))
                 except Exception as exc:
                     print("[RedAlarm] skipping widget trigger:", exc)
             widget_candidates.sort(key=lambda item: item[0])
-            first = widget_candidates[0] if widget_candidates else (None, "")
-            second = widget_candidates[1] if len(widget_candidates) > 1 else (None, "")
-            android_update_alarm_widgets(first[0], first[1], second[0], second[1])
+            first = widget_candidates[0] if widget_candidates else (None, "", None)
+            second = widget_candidates[1] if len(widget_candidates) > 1 else (None, "", None)
+            android_update_alarm_widgets(first[0], first[1], second[0], second[1],
+                                         days=first[2], second_days=second[2])
 
     def on_resume(self):
         # Fires when Android brings this activity back to the foreground —
