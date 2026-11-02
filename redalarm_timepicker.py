@@ -2402,7 +2402,10 @@ class SoundSelectionPage(BoxLayout):
             fallback.bind(size=lambda w, v: setattr(w, "text_size", v))
             self.choices.add_widget(fallback)
 
-        if candidate_path and os.path.isfile(candidate_path):
+        builtin_paths = {str(path or "") for _name, path in builtin_choices}
+        if candidate_path and candidate_path in builtin_paths:
+            self.note.text = "Built-in tone selected. Tap Play to preview, Stop to end, then USE SELECTED SOUND to apply."
+        elif candidate_path and os.path.isfile(candidate_path):
             self.note.text = "Local file selected. Tap Play to preview, Stop to end, then USE SELECTED SOUND to apply."
         else:
             self.note.text = "Preview follows phone MEDIA volume. RING LEVEL sets the saved alarm loudness."
