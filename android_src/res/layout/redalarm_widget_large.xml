@@ -91,14 +91,13 @@
             android:textColor="#D81722"
             android:textSize="10.5sp"
             android:textStyle="bold" />
-        <TextView
-            android:id="@+id/ra_countdown"
+        <Chronometer
+            android:id="@+id/ra_countdown_live"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="2dp"
             android:includeFontPadding="false"
             android:maxLines="1"
-            android:text="--"
             android:textColor="#FFFFFF"
             android:textSize="16sp"
             android:textStyle="bold" />
