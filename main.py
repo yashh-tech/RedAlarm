@@ -987,6 +987,12 @@ class AlarmStore:
 
     def load(self):
         self._alarms = {}
+        self.reload()
+
+    def reload(self):
+        """Re-read alarms.json, keeping the in-memory copy if the file is unreadable.
+        The native Android receiver edits this file directly (one-time alarms are
+        disabled after ringing), so stale memory must not overwrite it."""
         if not os.path.exists(self.path):
             return
         try:
@@ -995,8 +1001,8 @@ class AlarmStore:
             self._alarms = {
                 a["id"]: a for a in data if isinstance(a, dict) and "id" in a
             }
-        except (ValueError, IOError, OSError):
-            self._alarms = {}
+        except (ValueError, IOError, OSError, TypeError):
+            pass
 
     def save(self):
         directory = os.path.dirname(self.path)
@@ -1017,10 +1023,12 @@ class AlarmStore:
         return self._alarms.get(alarm_id)
 
     def put(self, alarm):
+        self.reload()
         self._alarms[alarm["id"]] = alarm
         self.save()
 
     def delete(self, alarm_id):
+        self.reload()
         self._alarms.pop(alarm_id, None)
         self.save()
 
@@ -1894,6 +1902,16 @@ class AlarmRow(BoxLayout):
             return
         if self.list_screen is not None:
             self.list_screen.confirm_delete(self.alarm_id)
+
+class SelectionToolbar(BoxLayout):
+    """While collapsed, its buttons overflow onto the SELECT button above; only
+    pass touches to them when the touch lands inside the visible toolbar."""
+
+    def on_touch_down(self, touch):
+        if not self.collide_point(*touch.pos):
+            return False
+        return super().on_touch_down(touch)
+
 
 class AlarmListScreen(Screen):
     _delete_popup = None
@@ -3706,6 +3724,11 @@ class RedAlarmApp(App):
         # case: phone locked overnight, app never force-closed.
         if not self._ready:
             return
+        self.store.reload()
+        if self.root.current == "list":
+            self.root.get_screen("list").refresh()
+        elif self.root.current == "home":
+            self.root.get_screen("home")._refresh_next_alarm()
         self._check_incoming_alarm()
         self._refresh_next_alarm_notification()
         if self._perm_popup is not None:
