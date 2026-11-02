@@ -12,6 +12,7 @@ import wave
 import struct
 
 from kivy.animation import Animation
+from kivy.app import App
 from kivy.core.window import Window
 from kivy.clock import Clock
 from kivy.core.audio import SoundLoader
@@ -2009,15 +2010,15 @@ class AlarmAppSettingsPage(BoxLayout):
             background_normal="", background_active="",
             background_color=(0, 0, 0, 0), foreground_color=LABEL_WHITE,
             disabled_foreground_color=LABEL_WHITE,
-            hint_text_color=LABEL_WHITE, cursor_color=(1, 0.16, 0.22, 1),
+            hint_text_color=LABEL_WHITE, cursor_color=LABEL_WHITE,
             disabled=False, opacity=1,
-            selection_color=(RED[0], RED[1], RED[2], 0.45),
+            selection_color=(1, 1, 1, 0.30),
             font_size=sp(16), padding=(dp(12), dp(8)),
             size_hint_y=None, height=dp(36),
         )
         add_rounded_background(
             self.label_input, (0, 0, 0, 1), radius=13,
-            edge=(RED[0] * 0.72, RED[1] * 0.72, RED[2] * 0.72, 1), edge_width=1.0,
+            edge=LABEL_WHITE, edge_width=1.0,
         )
         self.label_input.bind(text=self._label_changed)
         label_block.add_widget(self.label_input)

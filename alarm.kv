@@ -395,7 +395,7 @@
             bg_color: (0.10, 0.035, 0.045, 1) if root.selection_mode else (0.06, 0.06, 0.07, 1)
             text_color: COL_TEXT
             on_release: root.toggle_selection_mode()
-        BoxLayout:
+        SelectionToolbar:
             orientation: "vertical"
             size_hint_y: None
             height: root.selection_toolbar_height
