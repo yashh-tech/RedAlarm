@@ -49,6 +49,7 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
+from kivy.effects.dampedscroll import DampedScrollEffect
 from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
@@ -432,18 +433,41 @@ if ANDROID:
         _apply_lockscreen_flags(False)
 
     def android_copy_content_uri_to_file(uri_string, dest_path):
-        """Ringtone picks come back as content:// URIs; Kivy's audio
-        backends want a plain file path, so copy the bytes once."""
+        """Copy a picked content URI safely into app storage and clean partial files."""
         resolver = _activity().getContentResolver()
         input_stream = resolver.openInputStream(Uri.parse(uri_string))
-        buf = bytearray(4096)
-        with open(dest_path, "wb") as f:
-            while True:
-                n = input_stream.read(buf)
-                if n == -1:
-                    break
-                f.write(bytes(buf[:n]))
-        input_stream.close()
+        if input_stream is None:
+            raise IOError("Android returned no readable stream for the selected audio file")
+        try:
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            with open(dest_path, "wb") as output:
+                buf = bytearray(32768)
+                while True:
+                    count = int(input_stream.read(buf))
+                    if count < 0:
+                        break
+                    if count == 0:
+                        continue
+                    output.write(bytes(buf[:count]))
+        except Exception:
+            try:
+                if os.path.exists(dest_path):
+                    os.remove(dest_path)
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                input_stream.close()
+            except Exception:
+                pass
+        if not os.path.isfile(dest_path) or os.path.getsize(dest_path) <= 0:
+            try:
+                if os.path.exists(dest_path):
+                    os.remove(dest_path)
+            except Exception:
+                pass
+            raise IOError("The selected audio file was empty or unreadable")
         return dest_path
 
     def android_take_persistable_permission(uri_string):
@@ -476,30 +500,41 @@ if ANDROID:
     _OPEN_DOCUMENT_REQUEST_CODE = 9001
 
     def android_pick_audio_file(on_result):
-        """on_result(uri_string_or_None) runs on the Kivy thread."""
+        """Open Android's audio document picker and deliver one result safely."""
+        delivered = [False]
+
         def _on_activity_result(request_code, result_code, data):
-            if request_code != _OPEN_DOCUMENT_REQUEST_CODE:
+            if request_code != _OPEN_DOCUMENT_REQUEST_CODE or delivered[0]:
                 return
+            delivered[0] = True
             uri_string = None
             try:
-                if result_code == -1 and data is not None:  # RESULT_OK
+                if result_code == -1 and data is not None:  # Activity.RESULT_OK
                     uri = data.getData()
                     if uri is not None:
-                        uri_string = uri.toString()
+                        uri_string = str(uri.toString())
             except Exception as exc:
                 print("[RedAlarm] file pick result error:", exc)
             try:
                 android_activity.unbind(on_activity_result=_on_activity_result)
             except Exception:
                 pass
-            Clock.schedule_once(lambda dt: on_result(uri_string), 0)
+            Clock.schedule_once(lambda _dt: on_result(uri_string), 0)
 
-        android_activity.bind(on_activity_result=_on_activity_result)
-        intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
-        intent.addCategory(Intent.CATEGORY_OPENABLE)
-        intent.setType("audio/*")
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        _activity().startActivityForResult(intent, _OPEN_DOCUMENT_REQUEST_CODE)
+        try:
+            android_activity.bind(on_activity_result=_on_activity_result)
+            intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            intent.setType("audio/*")
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            _activity().startActivityForResult(intent, _OPEN_DOCUMENT_REQUEST_CODE)
+        except Exception:
+            try:
+                android_activity.unbind(on_activity_result=_on_activity_result)
+            except Exception:
+                pass
+            raise
 
     def android_get_display_name(uri_string):
         """Best-effort human-readable file name for a content:// URI."""
@@ -805,7 +840,7 @@ if ANDROID:
         song just sits there / Silent" bug), and because it ignores the alarm
         volume stream."""
 
-        def __init__(self, path, loop=True, volume=1.0):
+        def __init__(self, path, loop=True, volume=1.0, use_media_volume=False):
             MediaPlayer = autoclass("android.media.MediaPlayer")
             AudioAttributes = autoclass("android.media.AudioAttributes")
             AudioAttributesBuilder = autoclass("android.media.AudioAttributes$Builder")
@@ -813,7 +848,7 @@ if ANDROID:
             self._volume = max(0.0, min(1.0, float(volume)))
             try:
                 attrs = (AudioAttributesBuilder()
-                         .setUsage(AudioAttributes.USAGE_ALARM)
+                         .setUsage(AudioAttributes.USAGE_MEDIA if use_media_volume else AudioAttributes.USAGE_ALARM)
                          .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                          .build())
                 self._mp.setAudioAttributes(attrs)
@@ -825,6 +860,17 @@ if ANDROID:
             except Exception:
                 self.unload()
                 raise
+
+        def set_volume(self, value):
+            try:
+                self._volume = max(0.0, min(1.0, float(value)))
+            except (TypeError, ValueError):
+                self._volume = 1.0
+            if self._mp is not None:
+                try:
+                    self._mp.setVolume(self._volume, self._volume)
+                except Exception:
+                    pass
 
         def stop(self):
             try:
@@ -1154,17 +1200,17 @@ def ensure_builtin_ringtones(cache_dir):
     except Exception as exc:
         print("[RedAlarm] default built-in tone generation failed:", exc)
 
-    # Versioned filenames force regeneration of older, very quiet previews.
-    # All tones are mono PCM WAVs with a soft attack/release and safe amplitude.
+    # Keep the built-in set intentionally small: two soft tones and two pop alerts.
+    # Versioned filenames replace the previous cached set on existing installs.
     patterns = [
-        ("Pulse", [(740, .12), (0, .08), (880, .18), (0, .10), (740, .12)]),
-        ("Double Alert", [(1040, .12), (0, .10), (1040, .12), (0, .22), (1310, .22)]),
-        ("Rising Tone", [(520, .16), (660, .16), (820, .16), (1040, .28)]),
-        ("Digital", [(1320, .07), (0, .06), (990, .07), (0, .06), (1320, .07), (0, .16), (880, .22)]),
+        ("Soft Breeze", [(440, .28), (554, .34), (659, .46)], 0.36),
+        ("Gentle Chime", [(659, .22), (784, .30), (988, .42)], 0.42),
+        ("Pop Alert", [(960, .08), (0, .06), (1320, .16)], 0.78),
+        ("Double Pop", [(1046, .08), (0, .07), (1046, .08), (0, .09), (1568, .18)], 0.78),
     ]
     rate = 22050
-    for name, sequence in patterns:
-        filename = "builtin_v2_{}.wav".format(name.lower().replace(" ", "_"))
+    for name, sequence, gain in patterns:
+        filename = "builtin_v4_{}.wav".format(name.lower().replace(" ", "_"))
         path = os.path.join(work_dir, filename)
         try:
             if not usable(path):
@@ -1177,7 +1223,7 @@ def ensure_builtin_ringtones(cache_dir):
                     for index in range(count):
                         t = index / float(rate)
                         envelope = min(1.0, t * 45.0) * min(1.0, (seconds - t) * 18.0)
-                        sample = int(0.78 * envelope * 32767 * math.sin(2 * math.pi * frequency * t))
+                        sample = int(gain * envelope * 32767 * math.sin(2 * math.pi * frequency * t))
                         samples.append(max(-32768, min(32767, sample)))
                 with wave.open(path, "wb") as wav:
                     wav.setnchannels(1)
@@ -1299,7 +1345,7 @@ def resolve_ringtone_for_playback(raw_path, app_storage_dir, display_name=None):
     return raw_path
 
 
-def load_and_play(path, loop=True, volume=1.0):
+def load_and_play(path, loop=True, volume=1.0, use_media_volume=False):
     """Play a ringtone with the requested 0..1 volume on Android or desktop."""
     if not path:
         return None
@@ -1312,7 +1358,7 @@ def load_and_play(path, loop=True, volume=1.0):
         volume = 1.0
     if ANDROID:
         try:
-            player = _AndroidPlayer(path, loop, volume=volume)
+            player = _AndroidPlayer(path, loop, volume=volume, use_media_volume=use_media_volume)
             print("[RedAlarm] playback: native MediaPlayer started:", path)
             return player
         except Exception as exc:
@@ -1859,18 +1905,43 @@ class AlarmListScreen(Screen):
     battery_ok = BooleanProperty(True)
     overlay_ok = BooleanProperty(True)
     fsi_ok = BooleanProperty(True)
+    permission_banner_height = NumericProperty(0.0)
     selection_toolbar_height = NumericProperty(0.0)
     selection_toolbar_opacity = NumericProperty(0.0)
 
+    def _capture_list_scroll_offset(self):
+        scroll = self.ids.get("alarms_scroll") if hasattr(self, "ids") else None
+        if scroll is None or not scroll.children:
+            return 0.0
+        content = scroll.children[0]
+        max_offset = max(0.0, float(content.height) - float(scroll.height))
+        return max(0.0, min(max_offset, (1.0 - float(scroll.scroll_y)) * max_offset))
+
+    def _restore_list_scroll_offset(self, offset):
+        def _apply(_dt=0):
+            scroll = self.ids.get("alarms_scroll") if hasattr(self, "ids") else None
+            if scroll is None or not scroll.children:
+                return False
+            content = scroll.children[0]
+            max_offset = max(0.0, float(content.height) - float(scroll.height))
+            if max_offset > 0:
+                scroll.scroll_y = 1.0 - min(max_offset, max(0.0, float(offset))) / max_offset
+            else:
+                scroll.scroll_y = 1.0
+            return False
+        Clock.schedule_once(_apply, 0)
+        Clock.schedule_once(_apply, 0.08)
+
     def _animate_selection_toolbar(self, visible):
+        saved_offset = self._capture_list_scroll_offset()
         Animation.cancel_all(self, "selection_toolbar_height", "selection_toolbar_opacity")
-        Animation(
-            # Reserve enough height for the label, three equal action buttons,
-            # and bottom breathing room so the button row is never clipped.
+        animation = Animation(
             selection_toolbar_height=dp(124) if visible else 0.0,
             selection_toolbar_opacity=1.0 if visible else 0.0,
             duration=0.22, t="out_quad",
-        ).start(self)
+        )
+        animation.bind(on_complete=lambda *_: self._restore_list_scroll_offset(saved_offset))
+        animation.start(self)
 
     def _sync_selection_visuals(self):
         box = self.ids.get("alarms_box") if hasattr(self, "ids") else None
@@ -1906,6 +1977,13 @@ class AlarmListScreen(Screen):
         if self.selection_mode:
             return
         self._apply_selection_state([], keep_mode=True)
+
+    def toggle_selection_mode(self):
+        """Toggle SELECT/CANCEL without selecting an alarm."""
+        if self.selection_mode:
+            self.cancel_selection()
+        else:
+            self.start_selection()
 
     def begin_selection(self, alarm_id):
         ids = list(self.selected_alarm_ids) if self.selection_mode else []
@@ -2057,6 +2135,10 @@ class AlarmListScreen(Screen):
             self.battery_ok = True
             self.overlay_ok = True
             self.fsi_ok = True
+        visible_banners = sum(not value for value in (
+            self.exact_alarm_ok, self.battery_ok, self.fsi_ok, self.overlay_ok,
+        ))
+        self.permission_banner_height = dp(40) * visible_banners
 
     def refresh(self):
         app = App.get_running_app()
@@ -2280,7 +2362,7 @@ class PermissionsPopup(Popup):
             size_hint_y=None, height=dp(44))
         root.add_widget(title)
 
-        scroll = ScrollView(do_scroll_x=False, bar_width=0)
+        scroll = ScrollView(do_scroll_x=False, bar_width=0, effect_cls=DampedScrollEffect)
         grid = GridLayout(cols=1, spacing=dp(6), size_hint_y=None)
         grid.bind(minimum_height=grid.setter("height"))
         for item in self._items:
@@ -2533,7 +2615,11 @@ class AlarmEditScreen(Screen):
     def open_sound_page(self):
         self.stop_preview_sound()
         self._sound_candidate_path = str(self.sound_path or "")
-        self._sound_candidate_name = str(self.sound_name or "Default beep")
+        current_name = str(self.sound_name or "").strip()
+        if not self._sound_candidate_path and current_name.lower() in ("", "default beep", "classic beep"):
+            self._sound_candidate_name = "Classic Beep"
+        else:
+            self._sound_candidate_name = current_name or "Classic Beep"
         self.ui.show_sound()
 
     def set_builtin_sound(self, name, path):
@@ -2568,40 +2654,68 @@ class AlarmEditScreen(Screen):
         self.error_label.text = self.error_message
 
     def _on_sound_picked(self, path):
+        """Import a selected track as a candidate; preview only after the user taps Play."""
         if not path:
             return
+        path = str(path)
         print("[RedAlarm] ringtone picked, raw path/URI:", path)
-        name = None
-        if ANDROID and path.startswith("content://"):
-            try:
-                name = android_get_display_name(path)
-            except Exception as exc:
-                print("[RedAlarm] display-name lookup failed:", exc)
-            try:
-                android_take_persistable_permission(path)
-            except Exception as exc:
-                print("[RedAlarm] could not persist URI permission:", exc)
-            app = App.get_running_app()
-            try:
+        try:
+            name = None
+            if ANDROID and path.startswith("content://"):
+                try:
+                    name = android_get_display_name(path)
+                except Exception as exc:
+                    print("[RedAlarm] display-name lookup failed:", exc)
+                try:
+                    android_take_persistable_permission(path)
+                except Exception as exc:
+                    # The file is copied now, so a provider that refuses a
+                    # persistable grant does not prevent selecting this track.
+                    print("[RedAlarm] persistable URI grant unavailable:", exc)
+                app = App.get_running_app()
                 local_path = resolve_ringtone_for_playback(
                     path, app.ringtone_cache_dir, display_name=name
                 )
-            except Exception as exc:
-                local_path = None
-                print("[RedAlarm] immediate ringtone copy raised:", exc)
-            if not local_path or not os.path.exists(local_path):
-                print("[RedAlarm] immediate ringtone copy FAILED for", path)
-                self._on_picker_error("Couldn't read that file — try picking it again.")
-                return
-            print("[RedAlarm] ringtone copied to durable local path:", local_path)
-            self._sound_candidate_path = local_path
-        else:
-            self._sound_candidate_path = path
-        self._sound_candidate_name = name or os.path.basename(path.replace("\\", "/"))
-        self.error_message = ""
-        self.error_label.text = ""
-        self.ui.show_sound()
-        self.preview_sound(path=self._sound_candidate_path or App.get_running_app().default_ringtone_path, duration=8.0)
+                if not local_path or not os.path.isfile(local_path) or os.path.getsize(local_path) <= 0:
+                    raise IOError("Android could not copy the selected audio file")
+                self._sound_candidate_path = local_path
+                print("[RedAlarm] local ringtone copied to:", local_path)
+            else:
+                self._sound_candidate_path = path
+                if not os.path.isfile(path):
+                    raise IOError("The selected audio file is not accessible")
+
+            self._sound_candidate_name = name or os.path.basename(path.replace("\\", "/")) or "Selected music"
+            self.error_message = ""
+            self.error_label.text = ""
+            self.stop_preview_sound()
+            self.ui.show_sound()
+            # No automatic decode/play here: unsupported or damaged audio must
+            # not crash the UI while returning from Android's picker.
+            Clock.schedule_once(self.ui._refresh_sound_page, 0.05)
+        except Exception as exc:
+            print("[RedAlarm] local music import failed:", exc)
+            message = "Couldn't import that audio file. Try another file or format."
+            self._on_picker_error(message)
+            try:
+                self.stop_preview_sound()
+                self.ui.show_sound()
+                self.ui.sound_page.note.text = message
+            except Exception:
+                pass
+
+    def _sync_preview_buttons(self, active_path=None):
+        ui = getattr(self, "ui", None)
+        if ui is None:
+            return
+        try:
+            ui.settings_page.preview_button.set_playing(bool(active_path))
+        except Exception:
+            pass
+        try:
+            ui.sound_page.set_preview_playing(active_path, bool(active_path))
+        except Exception:
+            pass
 
     def stop_preview_sound(self):
         event, self._preview_stop_event = self._preview_stop_event, None
@@ -2611,6 +2725,7 @@ class AlarmEditScreen(Screen):
             except Exception:
                 pass
         sound, self._preview_sound = self._preview_sound, None
+        self._preview_path = None
         if sound is not None:
             try:
                 sound.stop()
@@ -2620,31 +2735,55 @@ class AlarmEditScreen(Screen):
                 sound.unload()
             except Exception:
                 pass
+        self._sync_preview_buttons(None)
 
+    def toggle_preview_sound(self, path=None, duration=8.0):
+        app = App.get_running_app()
+        target = str(path or self._sound_candidate_path or self.sound_path or app.default_ringtone_path)
+        if self._preview_sound is not None and str(getattr(self, "_preview_path", "")) == target:
+            self.stop_preview_sound()
+            return False
+        return self.preview_sound(path=target, duration=duration)
+
+    def set_alarm_volume(self, value):
+        """Store alarm playback gain without changing the media-volume preview."""
+        try:
+            self.volume = max(0.0, min(1.0, float(value)))
+        except (TypeError, ValueError):
+            self.volume = 1.0
     def preview_sound(self, path=None, duration=8.0):
-        """Audition a tone for up to eight seconds at the alarm slider gain.
-
-        Android playback uses the ALARM audio usage in _AndroidPlayer, so
-        the system alarm-volume stream is honoured just like real ringing.
-        """
+        """Preview at full player gain using Android MEDIA volume, with safe UI state."""
         self.stop_preview_sound()
         self.error_message = ""
         self.error_label.text = ""
         app = App.get_running_app()
-        path = path or self._sound_candidate_path or self.sound_path or app.default_ringtone_path
-        # Full player gain for previews. Android's ALARM audio usage still
-        # honours the system alarm-volume setting for the final speaker output.
-        gain = 1.0
-        sound = load_and_play(path, loop=False, volume=gain)
+        path = str(path or self._sound_candidate_path or self.sound_path or app.default_ringtone_path)
+        try:
+            sound = load_and_play(path, loop=False, volume=1.0, use_media_volume=True)
+        except Exception as exc:
+            print("[RedAlarm] preview player failed:", exc)
+            sound = None
         if sound is None:
-            self._on_picker_error("Couldn't preview that sound — try another file.")
-            return
+            self._on_picker_error("Couldn't preview that audio file. Try another file or format.")
+            try:
+                self.ui.sound_page.note.text = "Preview failed for this file. It is still selected; choose another track or format."
+            except Exception:
+                pass
+            return False
+
         self._preview_sound = sound
-        self.ui.sound_page.note.text = "Preview at 100% player gain · device alarm volume controls output"
+        self._preview_path = path
+        self._sync_preview_buttons(path)
+        try:
+            self.ui.sound_page.note.text = "Playing at 100% player gain using your phone MEDIA volume. Tap Stop to end."
+        except Exception:
+            pass
+
         def _stop(_dt):
             if self._preview_sound is sound:
                 self._preview_sound = None
                 self._preview_stop_event = None
+                self._preview_path = None
                 try:
                     sound.stop()
                 except Exception:
@@ -2653,8 +2792,11 @@ class AlarmEditScreen(Screen):
                     sound.unload()
                 except Exception:
                     pass
+                self._sync_preview_buttons(None)
             return False
+
         self._preview_stop_event = Clock.schedule_once(_stop, max(1.0, float(duration)))
+        return True
 
     def cancel_edit(self):
         app = App.get_running_app()
@@ -3165,38 +3307,10 @@ class AlarmRingScreen(Screen):
 
 
 class RootManager(ScreenManager):
-    """Fast screen transitions plus horizontal swipe navigation."""
+    """Fast screen transitions without global horizontal swipe navigation."""
     def __init__(self, **kwargs):
         kwargs.setdefault("transition", SlideTransition(duration=0.14))
         super().__init__(**kwargs)
-        self._swipe_start = None
-
-    def on_touch_down(self, touch):
-        if self.collide_point(*touch.pos) and not getattr(touch, "is_mouse_scrolling", False):
-            self._swipe_start = (touch, tuple(touch.pos), self.current)
-        return super().on_touch_down(touch)
-
-    def on_touch_up(self, touch):
-        start = self._swipe_start
-        self._swipe_start = None
-        handled = super().on_touch_up(touch)
-        if not start or start[0] is not touch or self.current != start[2]:
-            return handled
-        dx = touch.x - start[1][0]
-        dy = touch.y - start[1][1]
-        if abs(dx) < dp(90) or abs(dx) < abs(dy) * 1.35 or self.current == "ring":
-            return handled
-        if dx < 0:  # swipe left = back
-            if self.current == "edit":
-                self.get_screen("edit").cancel_edit()
-            elif self.current == "list":
-                self.get_screen("list").go_home()
-        else:  # swipe right = forward
-            if self.current == "home":
-                self.current = "list"
-            elif self.current == "list":
-                self.get_screen("list").open_new_alarm()
-        return True
 
 
 # ======================================================================
@@ -3263,6 +3377,7 @@ class RedAlarmApp(App):
         self.title = APP_TITLE
         self._queued_intents = []
         self._startup_started = time.monotonic()
+        self._main_ui_shown = False
         Window.bind(on_keyboard=self._on_keyboard)
         Window.bind(on_request_close=self._on_request_close)
 
@@ -3293,6 +3408,43 @@ class RedAlarmApp(App):
     
 
     def _finish_startup(self, dt):
+        """Keep startup errors from leaving the app permanently on its splash."""
+        try:
+            self._finish_startup_impl(dt)
+        except Exception as exc:
+            self._record_startup_exception(exc)
+            if getattr(self, "_pending_root", None) is not None:
+                self._show_main_ui(0)
+            else:
+                self._show_startup_failure(exc)
+        return False
+
+    def _record_startup_exception(self, exc):
+        try:
+            with open(self.crash_log_path, "a", encoding="utf-8") as stream:
+                stream.write("\n---- STARTUP FAILURE {} ----\n".format(datetime.datetime.now()))
+                traceback.print_exception(type(exc), exc, exc.__traceback__, file=stream)
+        except Exception:
+            pass
+        print("[RedAlarm] startup failure: {}: {}".format(type(exc).__name__, exc))
+
+    def _show_startup_failure(self, exc):
+        try:
+            self._splash.show_startup_error(
+                "{}: {}".format(type(exc).__name__, exc), self._retry_startup
+            )
+        except Exception as splash_exc:
+            print("[RedAlarm] could not render startup error: {}".format(splash_exc))
+
+    def _retry_startup(self):
+        self._ready = False
+        self._pending_root = None
+        self.root = None
+        self._main_ui_shown = False
+        self._splash.clear_startup_error()
+        Clock.schedule_once(self._finish_startup, 0.1)
+
+    def _finish_startup_impl(self, dt):
         Builder.load_file("alarm.kv")
         self.store = AlarmStore(os.path.join(self.user_data_dir, "alarms.json"))
         self.ringtone_cache_dir = os.path.join(self.user_data_dir, "ringtones")
@@ -3312,61 +3464,83 @@ class RedAlarmApp(App):
         self.root = root
         self._ready = True
 
-        # ---- alarm recovery: NOT deferred any further than this ----
-        if not os.path.exists(self.default_ringtone_path):
-            # first run only; needed before anything can ring/preview
-            self.default_ringtone_path = ensure_default_ringtone(self.ringtone_cache_dir)
-        if ANDROID:
-            try:
-                android_ensure_ring_channel()
-            except Exception as exc:
-                print("[RedAlarm] notification channel error:", exc)
-            try:
-                android_ensure_next_alarm_channel()
-            except Exception as exc:
-                print("[RedAlarm] next-alarm notification channel error:", exc)
-            try:
-                android_request_runtime_permissions()
-            except Exception as exc:
-                print("[RedAlarm] permission request error:", exc)
-
-        for alarm in self.store.all():
-            if alarm.get("enabled", True):
-                try:
-                    self.scheduler.schedule(alarm)
-                except Exception as exc:
-                    # A single bad record must never stop every alarm after
-                    # it in this list from being armed too.
-                    print("[RedAlarm] could not schedule alarm {}: {}"
-                          .format(alarm.get("id"), exc))
-
-        if ANDROID:
-            self._refresh_next_alarm_notification()
-            self._next_alarm_notification_event = Clock.schedule_interval(
-                self._refresh_next_alarm_notification, 60.0
-            )
-
-        self._check_incoming_alarm()
-        queued, self._queued_intents = self._queued_intents, []
-        for args in queued:
-            self._dispatch_intent(*args)
-
-        # Keep the splash visible for one second from app startup.
+        # Build the visible UI first. Alarm recovery and Android permission
+        # work run just after the screen swap, so they cannot strand the splash.
         remaining = max(
             0.0,
             1.0 - (time.monotonic() - self._startup_started)
         )
         Clock.schedule_once(self._show_main_ui, remaining)
+        Clock.schedule_once(self._finish_startup_services, remaining + 0.05)
+
+    def _finish_startup_services(self, dt):
+        """Arm stored alarms and refresh Android services after the UI is visible."""
+        try:
+            # ---- alarm recovery: NOT deferred any further than this ----
+            if not os.path.exists(self.default_ringtone_path):
+                # first run only; needed before anything can ring/preview
+                self.default_ringtone_path = ensure_default_ringtone(self.ringtone_cache_dir)
+            if ANDROID:
+                try:
+                    android_ensure_ring_channel()
+                except Exception as exc:
+                    print("[RedAlarm] notification channel error:", exc)
+                try:
+                    android_ensure_next_alarm_channel()
+                except Exception as exc:
+                    print("[RedAlarm] next-alarm notification channel error:", exc)
+                try:
+                    android_request_runtime_permissions()
+                except Exception as exc:
+                    print("[RedAlarm] permission request error:", exc)
+
+            for alarm in self.store.all():
+                if alarm.get("enabled", True):
+                    try:
+                        self.scheduler.schedule(alarm)
+                    except Exception as exc:
+                        # A single bad record must never stop every alarm after
+                        # it in this list from being armed too.
+                        print("[RedAlarm] could not schedule alarm {}: {}"
+                              .format(alarm.get("id"), exc))
+
+            if ANDROID:
+                self._refresh_next_alarm_notification()
+                self._next_alarm_notification_event = Clock.schedule_interval(
+                    self._refresh_next_alarm_notification, 60.0
+                )
+
+            self._check_incoming_alarm()
+            queued, self._queued_intents = self._queued_intents, []
+            for args in queued:
+                self._dispatch_intent(*args)
+        except Exception as exc:
+            self._record_startup_exception(exc)
+        return False
 
     def _show_main_ui(self, dt):
+        if getattr(self, "_main_ui_shown", False):
+            return False
         root = getattr(self, "_pending_root", None)
         if root is None:
-            return
+            return False
 
-        Window.remove_widget(self._splash)
-        Window.add_widget(root)
+        try:
+            if getattr(self._splash, "parent", None) is Window:
+                Window.remove_widget(self._splash)
+            if getattr(root, "parent", None) is None:
+                Window.add_widget(root)
+            self._main_ui_shown = True
+        except Exception as exc:
+            self._record_startup_exception(exc)
+            return False
+
         if ANDROID:
-            self.refresh_next_alarm_notification()
+            try:
+                self.refresh_next_alarm_notification()
+            except Exception as exc:
+                self._record_startup_exception(exc)
+        return False
 
 
     # ---- Samsung "Never sleeping apps" guidance (one-time / infrequent) ----

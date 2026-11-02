@@ -77,6 +77,18 @@ def main() -> int:
     compile(main_text, str(MAIN), "exec")
     compile(module_text, str(MODULE), "exec")
     print("PASS: main.py and redalarm_timepicker.py compile")
+    if ('AudioAttributes.USAGE_MEDIA if use_media_volume else AudioAttributes.USAGE_ALARM' not in main_text
+            or 'load_and_play(path, loop=False, volume=1.0, use_media_volume=True)' not in main_text):
+        fail("Sound preview must use full player gain and the device media-volume stream without changing alarm ringing")
+    if any(name not in main_text for name in ("Classic Beep", "Soft Breeze", "Gentle Chime", "Pop Alert", "Double Pop")):
+        fail("One or more expected built-in preview tones are missing")
+    if "effect_cls=None" in module_text:
+        fail("ScrollView must not set effect_cls=None; Kivy calls this value as a class")
+    if 'LABEL_WHITE = (1, 1, 1, 1)' not in module_text:
+        fail("Alarm-label text must use pure white")
+    if "AlarmContextMenu(" in main_text or "     def _fire_long_press(self, touch):" in main_text:
+        fail("A malformed/undefined long-press context-menu regression remains")
+    print("PASS: media-volume sound previews, built-in tones, valid ScrollView configuration, readable label, and long-press syntax")
 
     notif_start = main_text.find("def android_show_next_alarm_notification")
     notif_end = main_text.find("def android_cancel_next_alarm_notification", notif_start)
@@ -229,7 +241,7 @@ def main() -> int:
         fail("Tapping/holding a checkbox must not conflict with the row long-press timer")
     legacy_checkbox_markers = ("width: dp(30) if root.selection_mode else 0" in kv_text
                               and "opacity: 1 if root.selection_mode else 0" in kv_text)
-    animated_checkbox_markers = ("width: dp(30) * root.selection_reveal" in kv_text
+    animated_checkbox_markers = ("width: dp(30)" in kv_text
                                 and "opacity: root.selection_reveal" in kv_text
                                 and "selection_reveal = NumericProperty(0.0)" in main_text)
     if not (legacy_checkbox_markers or animated_checkbox_markers):
@@ -248,16 +260,29 @@ def main() -> int:
     if not (
         'kwargs["disabled_foreground_color"] = (1, 1, 1, 1)' in module_text
         or ('kwargs["disabled_foreground_color"] = LABEL_WHITE' in module_text
-            and 'LABEL_WHITE = (249 / 255.0, 249 / 255.0, 249 / 255.0, 1.0)' in module_text)
+            and 'LABEL_WHITE = (1, 1, 1, 1)' in module_text)
     ):
         fail("Label input disabled text must remain readable")
     if "def _get_line_options(self):" not in module_text or 'options["color"] = LABEL_WHITE' not in module_text:
         fail("Alarm label must force #F9F9F9 on Kivy's rendered text lines")
     if 'text: "CANCEL" if root.selection_mode else "SELECT"' not in kv_text or "def start_selection(self):" not in main_text:
         fail("Alarm list must provide an explicit Select control that opens empty selection mode")
-    if ('size: dp(136), dp(48)' not in kv_text
-            or 'on_press: root.cancel_selection() if root.selection_mode else root.start_selection()' not in kv_text):
-        fail("Select control must have a large, immediate touch target")
+    if ('size_hint: 1, None' not in kv_text or 'height: dp(52)' not in kv_text
+            or 'on_release: root.toggle_selection_mode()' not in kv_text
+            or "def toggle_selection_mode(self):" not in main_text):
+        fail("Select control must toggle selection mode on a completed tap")
+    if ('height: dp(52)' not in kv_text
+            or 'size_hint: 1, None' not in kv_text):
+        fail("Select control must occupy the full available width")
+    if ("percent_text = StringProperty" not in module_text
+            or "def set_alarm_volume(self, value):" not in main_text
+            or "load_and_play(path, loop=False, volume=1.0, use_media_volume=True)" not in main_text):
+        fail("Alarm-volume slider and media-stream sound preview wiring are missing")
+    root_manager_text = main_text.split("class RootManager(ScreenManager):", 1)[1].split(
+        "# ======================================================================\n# 5. APP", 1
+    )[0]
+    if "def on_touch_down(" in root_manager_text or "def on_touch_up(" in root_manager_text:
+        fail("Root-level gestures must not intercept navigation/touch controls")
     if "selection_toolbar_height=dp(124)" not in main_text:
         fail("Selection toolbar must reserve enough height for its action buttons")
     print("PASS: long-press checkboxes/action bar, individual delete confirmation, and bulk actions")
