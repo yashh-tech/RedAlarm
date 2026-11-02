@@ -81,6 +81,27 @@
             android:maxLines="1"
             android:textColor="#B9B9BE"
             android:textSize="13sp" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="2dp"
+            android:layout_marginTop="4dp"
+            android:maxLines="1"
+            android:text="Next Alarm In"
+            android:textColor="#D81722"
+            android:textSize="10.5sp"
+            android:textStyle="bold" />
+        <TextView
+            android:id="@+id/ra_countdown"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="2dp"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:text="--"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold" />
     </LinearLayout>
 
     <ImageView

@@ -30,8 +30,8 @@ public class RedAlarmClockWidgetProvider extends AppWidgetProvider {
     private static final float LARGE_MIN_HEIGHT_DP = 100f;
 
     @Override public void onUpdate(Context context, AppWidgetManager manager, int[] ids) {
-        scheduleMinuteTick(context);
         for (int id : ids) updateWidget(context, manager, id);
+        scheduleNextTick(context);
     }
 
     @Override public void onAppWidgetOptionsChanged(Context context, AppWidgetManager manager,
@@ -100,16 +100,24 @@ public class RedAlarmClockWidgetProvider extends AppWidgetProvider {
         }
         if (layout == R.layout.redalarm_widget_square) {
             views.setTextViewText(R.id.ra_countdown, RedAlarmWidgetData.countdownText(context));
+        } else if (layout == R.layout.redalarm_widget_large) {
+            views.setTextViewText(R.id.ra_countdown, RedAlarmWidgetData.countdownSecondsText(context));
         }
         RedAlarmWidgetData.bindLaunch(context, views, R.id.ra_widget_root, 7301 + id);
         return views;
     }
 
-    private static void scheduleMinuteTick(Context context) {
+    // One re-armed exact tick: 1s while an alarm is pending (live countdown),
+    // 60s once nothing is upcoming.
+    private static void scheduleNextTick(Context context) {
         AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         if (alarms == null) return;
-        long first = System.currentTimeMillis() + 60_000L;
-        alarms.setInexactRepeating(AlarmManager.RTC, first, 60_000L, tickPendingIntent(context));
+        long interval = RedAlarmWidgetData.hasUpcomingAlarm(context) ? 1_000L : 60_000L;
+        PendingIntent tick = tickPendingIntent(context);
+        long at = System.currentTimeMillis() + interval;
+        if (Build.VERSION.SDK_INT >= 23) alarms.setExactAndAllowWhileIdle(AlarmManager.RTC, at, tick);
+        else if (Build.VERSION.SDK_INT >= 19) alarms.setExact(AlarmManager.RTC, at, tick);
+        else alarms.set(AlarmManager.RTC, at, tick);
     }
 
     private static PendingIntent tickPendingIntent(Context context) {

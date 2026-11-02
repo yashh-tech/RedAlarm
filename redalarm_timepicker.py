@@ -1951,8 +1951,16 @@ def repeat_summary_text(days_selected):
     picked = [i for i, on in enumerate(list(days_selected or [])[:7]) if on]
     if not picked:
         return "Once"
+    chosen = set(picked)
+    weekdays = {0, 1, 2, 3, 4}
+    if chosen == weekdays:
+        return "Every weekday"
+    if chosen == {5, 6}:
+        return "Every weekend"
     if len(picked) == 7:
         return "Every day"
+    if weekdays.issubset(chosen):
+        return "Every weekday and " + ", ".join(REPEAT_DAY_FULL[i] for i in picked if i >= 5)
     if len(picked) == 1:
         return "Every " + REPEAT_DAY_FULL[picked[0]]
     return "Every " + ", ".join(REPEAT_DAY_SHORT[i] for i in picked)
@@ -2250,7 +2258,17 @@ class AlarmAppSettingsPage(BoxLayout):
         self.refresh_repeat_summary()
 
     def refresh_repeat_summary(self):
-        self.repeat_summary.text = repeat_summary_text(self.editor.days_selected)
+        new_text = repeat_summary_text(self.editor.days_selected)
+        if self.repeat_summary.text == new_text:
+            return
+        Animation.cancel_all(self.repeat_summary)
+
+        def show_new(*_):
+            self.repeat_summary.text = new_text
+            Animation(opacity=1.0, d=0.14, t="in_out_sine").start(self.repeat_summary)
+
+        Animation(opacity=0.0, d=0.09, t="in_out_sine").start(self.repeat_summary)
+        Clock.schedule_once(show_new, 0.09)
 
     def refresh_from_editor(self):
         self.refresh_time()

@@ -80,6 +80,7 @@ def main() -> int:
             "preview_button.set_playing" in main_source,
             "Local music selection and animated Play/Stop controls are missing")
     require("def repeat_summary_text(days_selected):" in module
+            and '"Every weekday"' in module and '"Every weekend"' in module
             and "self.editor.bind(days_selected=lambda *_: self.refresh_repeat_summary())" in module
             and "Once if no days are selected" not in module,
             "Edit Alarm must show a live repeat summary under the label")
@@ -121,10 +122,12 @@ def main() -> int:
     for marker in ("R.layout.redalarm_widget_large", "R.layout.redalarm_widget_wide",
                    "R.layout.redalarm_widget_square", "new RemoteViews(bySize)",
                    "onAppWidgetOptionsChanged", "RedAlarmWidgetData.countdownText(context)",
+                   "RedAlarmWidgetData.countdownSecondsText(context)",
                    "RedAlarmWidgetData.alarmTimeText(context, true)"):
         require(marker in provider, "adaptive widget provider marker missing: " + marker)
     for marker in ("has_next_alarm", "next_alarm_at", "next_alarm_label", "next_alarm_days",
-                   "alarmTimeText", "alarmLabelText", "alarmDaysText", "countdownText"):
+                   "alarmTimeText", "alarmLabelText", "alarmDaysText", "countdownText",
+                   "countdownSecondsText", "hasUpcomingAlarm"):
         require(marker in data_source, "widget data marker missing: " + marker)
     require('"next_alarm_days"' in main_source and "def widget_days_mask(days):" in main_source,
             "Python must publish the alarm repeat days for the widget")

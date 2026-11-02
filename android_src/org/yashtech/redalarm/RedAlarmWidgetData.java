@@ -105,4 +105,25 @@ final class RedAlarmWidgetData {
         if (hours < 24L) return hours + "h " + (minutes % 60L) + "m";
         return (hours / 24L) + "d " + (hours % 24L) + "h";
     }
+
+    /** Per-second countdown, "3h 42m 15s" style; "--" when none is upcoming. */
+    static String countdownSecondsText(Context context) {
+        long at = target(context, false);
+        long left = (at - System.currentTimeMillis() + 999L) / 1000L;
+        if (at <= 0L || left <= 0L) return "--";
+        long days = left / 86400L;
+        long hours = (left % 86400L) / 3600L;
+        long minutes = (left % 3600L) / 60L;
+        long seconds = left % 60L;
+        if (days > 0L) return days + "d " + hours + "h " + minutes + "m " + seconds + "s";
+        if (hours > 0L) return hours + "h " + minutes + "m " + seconds + "s";
+        if (minutes > 0L) return minutes + "m " + seconds + "s";
+        return seconds + "s";
+    }
+
+    /** True while the next alarm is still in the future and worth ticking for. */
+    static boolean hasUpcomingAlarm(Context context) {
+        long at = target(context, false);
+        return at > System.currentTimeMillis();
+    }
 }
