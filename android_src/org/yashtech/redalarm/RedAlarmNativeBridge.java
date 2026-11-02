@@ -315,7 +315,60 @@ public final class RedAlarmNativeBridge {
 
     static void refreshNextAlarm(Context context) { updateNextAlarmNotification(context.getApplicationContext()); }
 
+    /** Mirror the next two native triggers into the widget prefs so the widget stays
+     * current after native fires, snoozes and reboots without the Python app running. */
+    static void publishWidgetAlarms(Context context) {
+        Context app = context.getApplicationContext();
+        SharedPreferences p = prefs(app);
+        long now = System.currentTimeMillis();
+        long[] at = {Long.MAX_VALUE, Long.MAX_VALUE};
+        JSONObject[] cfg = new JSONObject[2];
+        for (String key : p.getAll().keySet()) {
+            if (!key.startsWith("config:")) continue;
+            String id = key.substring("config:".length());
+            JSONObject config;
+            try { config = new JSONObject(p.getString(key, "{}")); } catch (JSONException e) { continue; }
+            long candidate = Long.MAX_VALUE;
+            long regular = p.getLong(timeKey(id), 0L);
+            if (p.getBoolean(enabledKey(id), config.optBoolean("enabled", true)) && regular > now)
+                candidate = regular;
+            long snooze = p.getLong(snoozeKey(id), 0L);
+            if (snooze > now && snooze < candidate) candidate = snooze;
+            if (candidate < at[0]) {
+                at[1] = at[0]; cfg[1] = cfg[0]; at[0] = candidate; cfg[0] = config;
+            } else if (candidate < at[1]) {
+                at[1] = candidate; cfg[1] = config;
+            }
+        }
+        SharedPreferences.Editor edit = app.getSharedPreferences("redalarm_widget", Context.MODE_PRIVATE).edit();
+        String[] prefix = {"next", "second"};
+        for (int i = 0; i < 2; i++) {
+            boolean has = at[i] != Long.MAX_VALUE;
+            String label = has ? cfg[i].optString("label", "Alarm").trim() : "";
+            if (has && label.isEmpty()) label = "Alarm";
+            edit.putBoolean(i == 0 ? "has_next_alarm" : "has_second_alarm", has)
+                    .putLong(prefix[i] + "_alarm_at", has ? at[i] : 0L)
+                    .putString(prefix[i] + "_alarm_label", label)
+                    .putString(prefix[i] + "_alarm_days", has ? widgetDaysMask(cfg[i]) : "");
+        }
+        edit.apply();
+        Intent update = new Intent("org.yashtech.redalarm.UPDATE_WIDGETS");
+        update.setPackage(app.getPackageName());
+        app.sendBroadcast(update);
+    }
+
+    /** Monday-first config "days" -> Sunday-first "0101010" mask used by the widget. */
+    private static String widgetDaysMask(JSONObject config) {
+        JSONArray days = config.optJSONArray("days");
+        char[] mask = "0000000".toCharArray();
+        for (int i = 0; days != null && i < 7 && i < days.length(); i++)
+            if (days.optBoolean(i, false)) mask[(i + 1) % 7] = '1';
+        return new String(mask);
+    }
+
     private static void updateNextAlarmNotification(Context context) {
+        try { publishWidgetAlarms(context); }
+        catch (Throwable e) { android.util.Log.e("RedAlarmNative", "Widget refresh failed", e); }
         SharedPreferences p = prefs(context);
         long now = System.currentTimeMillis();
         long earliest = Long.MAX_VALUE;

@@ -7,6 +7,7 @@ import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.SizeF;
@@ -68,9 +69,15 @@ public class RedAlarmClockWidgetProvider extends AppWidgetProvider {
             bySize.put(new SizeF(WIDE_MIN_WIDTH_DP, LARGE_MIN_HEIGHT_DP), large);
             views = new RemoteViews(bySize);
         } else {
+            // Launchers report portrait as (minWidth, maxHeight) and landscape as
+            // (maxWidth, minHeight); never mix dimensions from different orientations.
             Bundle options = manager.getAppWidgetOptions(id);
-            int width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0);
-            int height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0);
+            boolean landscape = context.getResources().getConfiguration().orientation
+                    == Configuration.ORIENTATION_LANDSCAPE;
+            int width = options.getInt(landscape ? AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH
+                    : AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0);
+            int height = options.getInt(landscape ? AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT
+                    : AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0);
             if (width == 0 && height == 0) views = large;
             else if (width >= WIDE_MIN_WIDTH_DP && height >= LARGE_MIN_HEIGHT_DP) views = large;
             else if (width >= WIDE_MIN_WIDTH_DP) views = wide;
