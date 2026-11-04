@@ -1971,8 +1971,9 @@ class RepeatCountRow(BoxLayout):
     CHOICES = (1, 2, 3, 4, 5, 10)
 
     def __init__(self, value, on_change, **kwargs):
-        super().__init__(orientation="horizontal", spacing=dp(8),
-                         size_hint_y=None, height=dp(46), **kwargs)
+        kwargs.setdefault("size_hint_y", None)
+        kwargs.setdefault("height", dp(46))
+        super().__init__(orientation="horizontal", spacing=dp(8), **kwargs)
         self.value = max(1, min(10, int(value)))
         self.on_change = on_change
         labels = BoxLayout(orientation="vertical", spacing=dp(1))
