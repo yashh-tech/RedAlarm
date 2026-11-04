@@ -114,7 +114,7 @@ public final class RedAlarmRingActivity extends Activity {
                 hour = Math.max(0, Math.min(23, config.optInt("hour", 7)));
                 minute = Math.max(0, Math.min(59, config.optInt("minute", 0)));
                 autoDismissEnabled = config.optBoolean("auto_dismiss_enabled", true);
-                snoozeEnabled = config.optBoolean("snooze_enabled", true);
+                snoozeEnabled = RedAlarmNativeBridge.canSnooze(this, alarmId, config);
                 autoDismissSeconds = Math.max(1, Math.min(10800, config.optInt("auto_dismiss_sec", 5)));
             }
         } catch (JSONException e) {
@@ -231,10 +231,10 @@ public final class RedAlarmRingActivity extends Activity {
     }
 
     private void takeAction(String kind) {
-        if (!TextUtils.isEmpty(alarmId)) {
-            RedAlarmNativeBridge.performRingAction(getApplicationContext(), alarmId, kind);
+        if (!TextUtils.isEmpty(alarmId)
+                && RedAlarmNativeBridge.performRingAction(getApplicationContext(), alarmId, kind)) {
+            finishAndRemoveTask();
         }
-        finishAndRemoveTask();
     }
 
     @Override protected void onStart() {

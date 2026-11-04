@@ -1966,6 +1966,73 @@ def repeat_summary_text(days_selected):
     return "Every " + ", ".join(REPEAT_DAY_SHORT[i] for i in picked)
 
 
+class RepeatCountRow(BoxLayout):
+    """Compact repeat-count selector matching RedAlarm's rounded red/black controls."""
+    CHOICES = (1, 2, 3, 4, 5, 10)
+
+    def __init__(self, value, on_change, **kwargs):
+        super().__init__(orientation="horizontal", spacing=dp(8),
+                         size_hint_y=None, height=dp(46), **kwargs)
+        self.value = max(1, min(10, int(value)))
+        self.on_change = on_change
+        labels = BoxLayout(orientation="vertical", spacing=dp(1))
+        title = Label(text="MAX SNOOZES", color=SUB, font_size=sp(11.5),
+                      bold=True, halign="left", valign="middle",
+                      size_hint_y=None, height=dp(21))
+        title.bind(size=lambda w, v: setattr(w, "text_size", v))
+        subtitle = Label(text="Manual + automatic snoozes", color=(0.54, 0.54, 0.58, 1),
+                         font_size=sp(9.5), halign="left", valign="middle",
+                         size_hint_y=None, height=dp(18))
+        subtitle.bind(size=lambda w, v: setattr(w, "text_size", v))
+        labels.add_widget(title)
+        labels.add_widget(subtitle)
+        self.add_widget(labels)
+        self.value_button = RoundedActionButton(
+            "", callback=self._open_choices, accent=False,
+            size_hint=(None, None), size=(dp(126), dp(36)),
+        )
+        self.add_widget(self.value_button)
+        self._refresh()
+
+    def _refresh(self):
+        self.value_button.text = "{} {}".format(
+            self.value, "TIME" if self.value == 1 else "TIMES"
+        )
+
+    def set_value(self, value):
+        self.value = max(1, min(10, int(value)))
+        self._refresh()
+
+    def _open_choices(self):
+        content = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
+        heading = Label(text="MAXIMUM SNOOZE COUNT", color=TEXT, font_size=sp(12),
+                        bold=True, size_hint_y=None, height=dp(24))
+        content.add_widget(heading)
+        choices = GridLayout(cols=2, spacing=dp(7), size_hint_y=None,
+                             row_default_height=dp(38), row_force_default=True)
+        choices.bind(minimum_height=choices.setter("height"))
+        popup = Popup(title="", content=content, size_hint=(0.82, None),
+                      height=dp(190), background_color=CARD,
+                      separator_height=0, auto_dismiss=True)
+        for option in self.CHOICES:
+            button = RoundedActionButton(
+                "{} {}".format(option, "TIME" if option == 1 else "TIMES"),
+                callback=lambda selected=option: self._choose(selected, popup),
+                accent=(option == self.value),
+                size_hint_y=None, height=dp(38),
+            )
+            choices.add_widget(button)
+        content.add_widget(choices)
+        popup.open()
+
+    def _choose(self, value, popup):
+        self.value = int(value)
+        self._refresh()
+        if self.on_change:
+            self.on_change(self.value)
+        popup.dismiss()
+
+
 class AlarmAppSettingsPage(BoxLayout):
     """Compact settings page wired directly to the real AlarmEditScreen."""
     DAYS = [("M", "Mon"), ("T", "Tue"), ("W", "Wed"),
@@ -1992,6 +2059,34 @@ class AlarmAppSettingsPage(BoxLayout):
         line.bind(pos=lambda w, *_: setattr(w.rect, "pos", w.pos),
                   size=lambda w, *_: setattr(w.rect, "size", w.size))
         return line
+
+    def _toggle_header(self, title, icon_type, value, callback):
+        row = BoxLayout(orientation="horizontal", spacing=dp(8),
+                        size_hint_y=None, height=dp(36))
+        icon_holder = AnchorLayout(anchor_x="center", anchor_y="center",
+                                   size_hint=(None, 1), width=dp(28))
+        icon_holder.add_widget(icon_type(color=SUB, size=(dp(23), dp(23))))
+        row.add_widget(icon_holder)
+        label_holder = AnchorLayout(anchor_x="left", anchor_y="center",
+                                     size_hint_x=1)
+        label_holder.add_widget(self._label(title, 12, TEXT, False, dp(26)))
+        row.add_widget(label_holder)
+        switch = PillSwitch(value=bool(value), on_change=callback,
+                            size=(dp(60), dp(27)))
+        row.add_widget(switch)
+        return row, switch
+
+    def _sync_setting_controls(self):
+        controls = (
+            (self.snooze_control, bool(self.editor.snooze_enabled), 54),
+            (self.auto_snooze_interval_control, bool(self.editor.auto_snooze_enabled), 54),
+            (self.auto_snooze_count_control, bool(self.editor.auto_snooze_enabled), 46),
+            (self.dismiss_control, bool(self.editor.auto_dismiss_enabled), 54),
+        )
+        for widget, enabled, height in controls:
+            widget.height = dp(height if enabled else 0)
+            widget.opacity = 1 if enabled else 0
+            widget.disabled = not enabled
 
     def _build(self):
         self.card = RoundedPanel(fill=CARD, radius=dp(26), orientation="vertical",
@@ -2160,22 +2255,53 @@ class AlarmAppSettingsPage(BoxLayout):
         self.content.add_widget(vibration)
         self.content.add_widget(self._separator())
 
+        self.snooze_header, self.snooze_switch = self._toggle_header(
+            "SNOOZE", SnoozeIcon, self.editor.snooze_enabled, self._snooze_toggled
+        )
+        self.content.add_widget(self.snooze_header)
         self.snooze_control = DurationRow(
-            "SNOOZE", "Repeat alarm after", int(self.editor.snooze_sec),
-            3, 3600, lambda val: setattr(self.editor, "snooze_sec", val),
-            icon=SnoozeIcon,
-            size_hint_y=None, height=dp(54),
+            "SNOOZE DURATION", "Manual snooze when Auto Snooze is off",
+            int(self.editor.snooze_sec), 3, 3600,
+            lambda val: setattr(self.editor, "snooze_sec", val),
+            icon=SnoozeIcon, size_hint_y=None, height=dp(54),
         )
         self.content.add_widget(self.snooze_control)
         self.content.add_widget(self._separator())
+
+        self.auto_snooze_header, self.auto_snooze_switch = self._toggle_header(
+            "AUTO SNOOZE", SnoozeIcon, self.editor.auto_snooze_enabled,
+            self._auto_snooze_toggled
+        )
+        self.content.add_widget(self.auto_snooze_header)
+        self.auto_snooze_interval_control = DurationRow(
+            "AUTO SNOOZE INTERVAL", "Wait before the next ringing session",
+            int(self.editor.auto_snooze_interval_sec), 3, 3600,
+            lambda val: setattr(self.editor, "auto_snooze_interval_sec", val),
+            icon=SnoozeIcon, size_hint_y=None, height=dp(54),
+        )
+        self.content.add_widget(self.auto_snooze_interval_control)
+        self.auto_snooze_count_control = RepeatCountRow(
+            self.editor.auto_snooze_max_count,
+            lambda val: setattr(self.editor, "auto_snooze_max_count", int(val)),
+            size_hint_y=None, height=dp(46),
+        )
+        self.content.add_widget(self.auto_snooze_count_control)
+        self.content.add_widget(self._separator())
+
+        self.dismiss_header, self.dismiss_switch = self._toggle_header(
+            "AUTO-DISMISS", AutoDismissIcon, self.editor.auto_dismiss_enabled,
+            self._auto_dismiss_toggled
+        )
+        self.content.add_widget(self.dismiss_header)
         self.dismiss_control = DurationRow(
-            "AUTO-DISMISS", "Stop alarm automatically", int(self.editor.auto_dismiss_sec),
-            1, 3600, lambda val: setattr(self.editor, "auto_dismiss_sec", val),
-            icon=AutoDismissIcon,
-            size_hint_y=None, height=dp(54),
+            "AUTO-DISMISS DURATION", "Stop every ringing session after",
+            int(self.editor.auto_dismiss_sec), 1, 3600,
+            lambda val: setattr(self.editor, "auto_dismiss_sec", val),
+            icon=AutoDismissIcon, size_hint_y=None, height=dp(54),
         )
         self.content.add_widget(self.dismiss_control)
         self.content.add_widget(self._separator())
+        self._sync_setting_controls()
         self.error_label = self._label("", 11.5, RED, False, dp(20))
         self.content.add_widget(self.error_label)
 
@@ -2195,6 +2321,18 @@ class AlarmAppSettingsPage(BoxLayout):
 
     def _vibration_changed(self, value):
         self.editor.vibrate = bool(value)
+
+    def _snooze_toggled(self, value):
+        self.editor.snooze_enabled = bool(value)
+        self._sync_setting_controls()
+
+    def _auto_snooze_toggled(self, value):
+        self.editor.auto_snooze_enabled = bool(value)
+        self._sync_setting_controls()
+
+    def _auto_dismiss_toggled(self, value):
+        self.editor.auto_dismiss_enabled = bool(value)
+        self._sync_setting_controls()
 
     def _sync_wheel_layout(self, *_):
         height = max(dp(1), float(self.wheel_panel.height))
@@ -2276,8 +2414,14 @@ class AlarmAppSettingsPage(BoxLayout):
         self.refresh_days()
         self.volume_control.value = float(self.editor.volume)
         self.vibration_switch.value = bool(self.editor.vibrate)
-        self.dismiss_control._set_value(int(self.editor.auto_dismiss_sec))
+        self.snooze_switch.value = bool(self.editor.snooze_enabled)
+        self.auto_snooze_switch.value = bool(self.editor.auto_snooze_enabled)
+        self.dismiss_switch.value = bool(self.editor.auto_dismiss_enabled)
         self.snooze_control._set_value(int(self.editor.snooze_sec))
+        self.auto_snooze_interval_control._set_value(int(self.editor.auto_snooze_interval_sec))
+        self.auto_snooze_count_control.set_value(int(self.editor.auto_snooze_max_count))
+        self.dismiss_control._set_value(int(self.editor.auto_dismiss_sec))
+        self._sync_setting_controls()
         self.error_label.text = self.editor.error_message
         # Keep the legacy delete feature available only when editing a saved alarm.
         editing_existing = bool(self.editor.editing_id)

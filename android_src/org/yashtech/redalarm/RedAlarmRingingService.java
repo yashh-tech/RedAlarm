@@ -52,6 +52,10 @@ public final class RedAlarmRingingService extends Service {
         handler.removeCallbacks(timeout);
         alarmId = id;
         session++;
+        if (!"snooze".equals(intent.getStringExtra("alarm_kind"))) {
+            getSharedPreferences("redalarm_native_alarms_v1", MODE_PRIVATE).edit()
+                    .putInt("auto_snooze_count:" + id, 0).apply();
+        }
         boolean autoDismissEnabled = config.optBoolean("auto_dismiss_enabled", true);
         int duration = autoDismissEnabled ? Math.max(1, Math.min(10800, config.optInt("auto_dismiss_sec", 5))) : 0;
         final long ringStartedElapsed = android.os.SystemClock.elapsedRealtime();
@@ -115,7 +119,7 @@ public final class RedAlarmRingingService extends Service {
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setContentIntent(content).setFullScreenIntent(content, true)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Dismiss", dismiss);
-        if (config.optBoolean("snooze_enabled", true)) {
+        if (RedAlarmNativeBridge.canSnooze(this, id, config)) {
             b.addAction(android.R.drawable.ic_popup_reminder, "Snooze", snooze);
         }
         b.setOngoing(true).setAutoCancel(false).setOnlyAlertOnce(true);
@@ -210,6 +214,17 @@ public final class RedAlarmRingingService extends Service {
     private void stopAndFinish() {
         handler.removeCallbacks(timeout);
         stopCurrentPlayback();
+        // This method is reached for the configured Auto-Dismiss timeout.
+        // Auto Snooze uses its own interval and shares the manual repeat counter.
+        String raw = RedAlarmNativeBridge.getConfig(this, alarmId);
+        if (!TextUtils.isEmpty(raw)) {
+            try {
+                JSONObject config = new JSONObject(raw);
+                RedAlarmNativeBridge.scheduleAutoSnoozeAfterDismiss(this, alarmId, config);
+            } catch (JSONException e) {
+                android.util.Log.e("RedAlarmNative", "Auto Snooze configuration invalid", e);
+            }
+        }
         getSharedPreferences("redalarm_native_alarms_v1", MODE_PRIVATE).edit()
                 .putBoolean("ringing:" + alarmId, false).remove("ringing_id")
                         .remove("ring_started_elapsed:" + alarmId)

@@ -50,6 +50,7 @@ public final class RedAlarmNativeBridge {
     static String enabledKey(String id) { return "enabled:" + id; }
     static String timeKey(String id) { return "time:" + id; }
     static String snoozeKey(String id) { return "snooze:" + id; }
+    static String autoSnoozeCountKey(String id) { return "auto_snooze_count:" + id; }
     static String ringingKey(String id) { return "ringing:" + id; }
 
     public static void scheduleAlarm(Context context, String alarmId, String alarmJson,
@@ -154,30 +155,70 @@ public final class RedAlarmNativeBridge {
     }
 
 
+    /** Whether manual Snooze is currently allowed for this alarm. */
+    public static boolean canSnooze(Context context, String alarmId, JSONObject config) {
+        if (context == null || TextUtils.isEmpty(alarmId) || config == null) return false;
+        if (!config.optBoolean("snooze_enabled", true)) return false;
+        if (!config.optBoolean("auto_snooze_enabled", false)) return true;
+        int maximum = Math.max(1, Math.min(10, config.optInt("auto_snooze_max_count", 3)));
+        int used = prefs(context.getApplicationContext()).getInt(autoSnoozeCountKey(alarmId), 0);
+        return used < maximum;
+    }
+
+    /** Schedule the next unattended repeat after an Auto-Dismiss timeout. */
+    public static boolean scheduleAutoSnoozeAfterDismiss(Context context, String alarmId,
+                                                          JSONObject config) {
+        if (context == null || TextUtils.isEmpty(alarmId) || config == null
+                || !config.optBoolean("auto_snooze_enabled", false)) return false;
+        Context app = context.getApplicationContext();
+        SharedPreferences p = prefs(app);
+        // Do not schedule a second repeat if a manual Snooze won a timeout race.
+        if (!alarmId.equals(p.getString("ringing_id", ""))
+                || !p.getBoolean(ringingKey(alarmId), false)) return false;
+        int used = p.getInt(autoSnoozeCountKey(alarmId), 0);
+        int maximum = Math.max(1, Math.min(10, config.optInt("auto_snooze_max_count", 3)));
+        if (used >= maximum) return false;
+        int seconds = Math.max(3, Math.min(3600, config.optInt("auto_snooze_interval_sec", 300)));
+        scheduleAlarm(app, alarmId, config.toString(), getStorePath(app),
+                System.currentTimeMillis() + seconds * 1000L, true);
+        p.edit().putInt(autoSnoozeCountKey(alarmId), used + 1).apply();
+        return true;
+    }
+
     /** Handle ring controls without starting the Kivy/Python activity. */
-    public static void performRingAction(Context context, String alarmId, String kind) {
-        if (context == null || TextUtils.isEmpty(alarmId) || TextUtils.isEmpty(kind)) return;
+    public static boolean performRingAction(Context context, String alarmId, String kind) {
+        if (context == null || TextUtils.isEmpty(alarmId) || TextUtils.isEmpty(kind)) return false;
         Context app = context.getApplicationContext();
         String current = prefs(app).getString("ringing_id", "");
-        if (!alarmId.equals(current)) return;
+        if (!alarmId.equals(current)) return false;
 
         if ("snooze".equals(kind)) {
             String raw = getConfig(app, alarmId);
-            if (!TextUtils.isEmpty(raw)) {
-                try {
-                    JSONObject config = new JSONObject(raw);
-                    if (!config.optBoolean("snooze_enabled", true)) return;
-                    int seconds = Math.max(1, Math.min(10800, config.optInt("snooze_sec", 60)));
-                    scheduleAlarm(app, alarmId, raw, getStorePath(app),
-                            System.currentTimeMillis() + seconds * 1000L, true);
-                } catch (JSONException e) {
-                    android.util.Log.e("RedAlarmNative", "Snooze configuration invalid", e);
+            if (TextUtils.isEmpty(raw)) return false;
+            try {
+                JSONObject config = new JSONObject(raw);
+                if (!canSnooze(app, alarmId, config)) return false;
+                int seconds;
+                SharedPreferences p = prefs(app);
+                if (config.optBoolean("auto_snooze_enabled", false)) {
+                    int used = p.getInt(autoSnoozeCountKey(alarmId), 0);
+                    seconds = Math.max(3, Math.min(3600,
+                            config.optInt("auto_snooze_interval_sec", 300)));
+                    p.edit().putInt(autoSnoozeCountKey(alarmId), used + 1).apply();
+                } else {
+                    seconds = Math.max(3, Math.min(10800, config.optInt("snooze_sec", 300)));
                 }
+                scheduleAlarm(app, alarmId, raw, getStorePath(app),
+                        System.currentTimeMillis() + seconds * 1000L, true);
+            } catch (JSONException e) {
+                android.util.Log.e("RedAlarmNative", "Snooze configuration invalid", e);
+                return false;
             }
         } else if ("dismiss".equals(kind)) {
             cancelAlarm(app, alarmId, true);
+            prefs(app).edit().remove(autoSnoozeCountKey(alarmId)).apply();
         } else {
-            return;
+            return false;
         }
 
         stopRinging(app, alarmId);
@@ -185,6 +226,7 @@ public final class RedAlarmNativeBridge {
         finished.setPackage(app.getPackageName());
         finished.putExtra("alarm_id", alarmId);
         app.sendBroadcast(finished);
+        return true;
     }
 
     /** Remove the normal app task before displaying the independent ring task. */

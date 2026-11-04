@@ -2460,6 +2460,9 @@ class AlarmEditScreen(Screen):
     vibrate = BooleanProperty(False)
     volume = NumericProperty(1.0)
     snooze_enabled = BooleanProperty(True)
+    auto_snooze_enabled = BooleanProperty(False)
+    auto_snooze_interval_sec = NumericProperty(300)
+    auto_snooze_max_count = NumericProperty(3)
     auto_dismiss_enabled = BooleanProperty(True)
     auto_dismiss_sec = NumericProperty(5)
     snooze_sec = NumericProperty(300)
@@ -2552,6 +2555,9 @@ class AlarmEditScreen(Screen):
             self.vibrate = False
             self.volume = 1.0
             self.snooze_enabled = True
+            self.auto_snooze_enabled = False
+            self.auto_snooze_interval_sec = 300
+            self.auto_snooze_max_count = 3
             self.auto_dismiss_enabled = True
             self.auto_dismiss_sec = 5
             self.snooze_sec = 300
@@ -2585,6 +2591,13 @@ class AlarmEditScreen(Screen):
                 self.volume = 1.0
             self.auto_dismiss_sec = max(1, min(3600, int(alarm.get("auto_dismiss_sec", 5) or 5)))
             self.snooze_sec = max(3, min(3600, int(alarm.get("snooze_sec", 300) or 300)))
+            self.auto_snooze_enabled = bool(alarm.get("auto_snooze_enabled", False))
+            self.auto_snooze_interval_sec = max(
+                3, min(3600, int(alarm.get("auto_snooze_interval_sec", 300) or 300))
+            )
+            self.auto_snooze_max_count = max(
+                1, min(10, int(alarm.get("auto_snooze_max_count", 3) or 3))
+            )
 
         self.ampm = self.time_state["ampm"]
         self.ui.picker_page.set_values(
@@ -3038,6 +3051,8 @@ class AlarmEditScreen(Screen):
         try:
             dismiss_seconds = int(self.auto_dismiss_sec)
             snooze_seconds = int(self.snooze_sec)
+            auto_snooze_interval_seconds = int(self.auto_snooze_interval_sec)
+            auto_snooze_max_count = int(self.auto_snooze_max_count)
             volume = max(0.0, min(1.0, float(self.volume)))
         except (TypeError, ValueError, OverflowError):
             return self._fail("Enter valid settings values.")
@@ -3045,6 +3060,10 @@ class AlarmEditScreen(Screen):
             return self._fail("Auto-dismiss must be between 1 second and 3 Hr.")
         if not 3 <= snooze_seconds <= 10800:
             return self._fail("Snooze must be between 3 seconds and 3 Hr.")
+        if not 3 <= auto_snooze_interval_seconds <= 3600:
+            return self._fail("Auto Snooze interval must be between 3 seconds and 1 Hr.")
+        if not 1 <= auto_snooze_max_count <= 10:
+            return self._fail("Auto Snooze count must be between 1 and 10.")
 
         app = App.get_running_app()
         is_new_alarm = not bool(self.editing_id)
@@ -3072,6 +3091,9 @@ class AlarmEditScreen(Screen):
             "auto_dismiss_enabled": bool(self.auto_dismiss_enabled),
             "snooze_sec": snooze_seconds,
             "snooze_enabled": bool(self.snooze_enabled),
+            "auto_snooze_enabled": bool(self.auto_snooze_enabled),
+            "auto_snooze_interval_sec": auto_snooze_interval_seconds,
+            "auto_snooze_max_count": auto_snooze_max_count,
             "vibrate": bool(self.vibrate),
             "enabled": True,
         })
