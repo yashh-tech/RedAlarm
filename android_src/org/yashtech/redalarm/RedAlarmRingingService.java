@@ -53,8 +53,11 @@ public final class RedAlarmRingingService extends Service {
         alarmId = id;
         session++;
         if (!"snooze".equals(intent.getStringExtra("alarm_kind"))) {
+            // A normal scheduled fire begins a fresh sequence. The
+            // automatic and manual snooze allowances are independent.
             getSharedPreferences("redalarm_native_alarms_v1", MODE_PRIVATE).edit()
-                    .putInt("auto_snooze_count:" + id, 0).apply();
+                    .putInt("auto_snooze_count:" + id, 0)
+                    .putInt("manual_snooze_count:" + id, 0).apply();
         }
         boolean autoDismissEnabled = config.optBoolean("auto_dismiss_enabled", true)
                 || config.optBoolean("auto_snooze_enabled", false);
@@ -215,8 +218,8 @@ public final class RedAlarmRingingService extends Service {
     private void stopAndFinish() {
         handler.removeCallbacks(timeout);
         stopCurrentPlayback();
-        // This method is reached for the configured Auto-Dismiss timeout.
-        // Auto Snooze uses its own interval and shares the manual repeat counter.
+        // This method is reached for the configured ring-duration timeout.
+        // Auto Snooze consumes only its own automatic-repeat allowance.
         String raw = RedAlarmNativeBridge.getConfig(this, alarmId);
         if (!TextUtils.isEmpty(raw)) {
             try {

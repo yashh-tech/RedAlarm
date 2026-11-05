@@ -307,16 +307,17 @@ def _spinner_tick_path():
     folder = os.path.join(tempfile.gettempdir(), "redalarm_timepicker_test_sounds")
     os.makedirs(folder, exist_ok=True)
     # Versioned filename ensures any older, quieter test tick is not reused.
-    path = os.path.join(folder, "soft_spinner_tick_v2.wav")
+    path = os.path.join(folder, "soft_spinner_tap_v3.wav")
     if not os.path.isfile(path):
         sample_rate = 22050
-        duration = 0.032
+        duration = 0.046
         frames = bytearray()
         for i in range(int(sample_rate * duration)):
             t = i / float(sample_rate)
-            envelope = min(1.0, t * 500.0) * math.exp(-t * 105.0)
-            tone = math.sin(2.0 * math.pi * 1680.0 * t) + 0.28 * math.sin(2.0 * math.pi * 2780.0 * t)
-            sample = int(13500 * envelope * tone)
+            attack = min(1.0, t / 0.0025)
+            envelope = attack * math.exp(-t * 72.0)
+            tone = math.sin(2.0 * math.pi * 720.0 * t) + 0.22 * math.sin(2.0 * math.pi * 1080.0 * t)
+            sample = int(7600 * envelope * tone)
             frames.extend(struct.pack("<h", max(-32768, min(32767, sample))))
         with wave.open(path, "wb") as wav:
             wav.setnchannels(1)
@@ -347,7 +348,7 @@ def _load_spinner_tick(_dt=0):
         path = _spinner_tick_path()
         sound = SoundLoader.load(path)
         if sound is not None:
-            sound.volume = 0.45
+            sound.volume = 0.28
             _SPINNER_TICK_SOUNDS.append(sound)
     except Exception as exc:
         # Tick audio is optional and must never block time selection.
@@ -364,7 +365,7 @@ def _play_spinner_tick():
     """Play a preloaded voice only; never create files or load audio from touch."""
     global _SPINNER_TICK_LAST_AT, _SPINNER_TICK_CURSOR
     now = time.monotonic()
-    if now - _SPINNER_TICK_LAST_AT < 0.028:
+    if now - _SPINNER_TICK_LAST_AT < 0.065:
         return
     if not _SPINNER_TICK_SOUNDS:
         _schedule_spinner_tick_load()
@@ -373,7 +374,7 @@ def _play_spinner_tick():
     _SPINNER_TICK_CURSOR += 1
     try:
         sound.stop()
-        sound.volume = 0.45
+        sound.volume = 0.28
         sound.play()
         _SPINNER_TICK_LAST_AT = now
     except Exception as exc:
@@ -1968,20 +1969,22 @@ def repeat_summary_text(days_selected):
 
 class RepeatCountRow(BoxLayout):
     """Compact repeat-count selector matching RedAlarm's rounded red/black controls."""
-    CHOICES = (1, 2, 3, 4, 5, 10)
+    CHOICES = tuple(range(1, 11))
 
-    def __init__(self, value, on_change, **kwargs):
+    def __init__(self, value, on_change, title="MAX REPEATS",
+                 subtitle="Automatic repeats only", **kwargs):
         kwargs.setdefault("size_hint_y", None)
         kwargs.setdefault("height", dp(46))
         super().__init__(orientation="horizontal", spacing=dp(8), **kwargs)
         self.value = max(1, min(10, int(value)))
         self.on_change = on_change
+        self.title_text = str(title)
         labels = BoxLayout(orientation="vertical", spacing=dp(1))
-        title = Label(text="MAX REPEATS", color=SUB, font_size=sp(11.5),
+        title = Label(text=title, color=SUB, font_size=sp(11.5),
                       bold=True, halign="left", valign="middle",
                       size_hint_y=None, height=dp(21))
         title.bind(size=lambda w, v: setattr(w, "text_size", v))
-        subtitle = Label(text="Includes manual Snooze actions", color=(0.54, 0.54, 0.58, 1),
+        subtitle = Label(text=subtitle, color=(0.54, 0.54, 0.58, 1),
                          font_size=sp(9.5), halign="left", valign="middle",
                          size_hint_y=None, height=dp(18))
         subtitle.bind(size=lambda w, v: setattr(w, "text_size", v))
@@ -2006,14 +2009,14 @@ class RepeatCountRow(BoxLayout):
 
     def _open_choices(self):
         content = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
-        heading = Label(text="MAXIMUM REPEAT COUNT", color=TEXT, font_size=sp(12),
+        heading = Label(text="MAXIMUM " + self.title_text.replace("MAX ", ""), color=TEXT, font_size=sp(12),
                         bold=True, size_hint_y=None, height=dp(24))
         content.add_widget(heading)
         choices = GridLayout(cols=2, spacing=dp(7), size_hint_y=None,
                              row_default_height=dp(38), row_force_default=True)
         choices.bind(minimum_height=choices.setter("height"))
         popup = Popup(title="", content=content, size_hint=(0.82, None),
-                      height=dp(190), background_color=CARD,
+                      height=dp(258), background_color=CARD,
                       separator_height=0, auto_dismiss=True)
         for option in self.CHOICES:
             button = RoundedActionButton(
@@ -2078,20 +2081,15 @@ class AlarmAppSettingsPage(BoxLayout):
         return row, row.switch
 
     def _dismiss_summary(self):
-        if not (self.editor.auto_dismiss_enabled or self.editor.auto_snooze_enabled):
+        if not self.editor.auto_dismiss_enabled:
             return "Off  •  Tap to choose ring duration"
-        summary = "Ring for {}".format(format_duration(int(self.editor.auto_dismiss_sec)))
-        if self.editor.auto_snooze_enabled:
-            summary += "  •  Repeat after {} (max {})".format(
-                format_duration(int(self.editor.auto_snooze_interval_sec)),
-                int(self.editor.auto_snooze_max_count),
-            )
-        return summary
+        return "Ring for {}".format(format_duration(int(self.editor.auto_dismiss_sec)))
 
     def _auto_snooze_summary(self):
         if not self.editor.auto_snooze_enabled:
-            return "Off  •  Automatically repeat after each ring"
-        return "Every {}  •  Up to {} repeats".format(
+            return "Off  •  Tap to set automatic repeat"
+        return "Ring {}  •  Every {}  •  Max {}".format(
+            format_duration(int(self.editor.auto_dismiss_sec)),
             format_duration(int(self.editor.auto_snooze_interval_sec)),
             int(self.editor.auto_snooze_max_count),
         )
@@ -2103,18 +2101,10 @@ class AlarmAppSettingsPage(BoxLayout):
         )
         self.dismiss_header.set_summary(self._dismiss_summary())
         self.auto_snooze_row.set_summary(self._auto_snooze_summary())
+        self.vibration_row.set_summary("On" if self.editor.vibrate else "Off")
 
     def _sync_setting_controls(self, animate=True):
-        auto_repeat_visible = bool(
-            self._dismiss_expanded and self._auto_snooze_expanded
-            and self.editor.auto_snooze_enabled
-        )
-        controls = (
-            (self.dismiss_control, self._dismiss_expanded, 54),
-            (self.auto_snooze_row, self._dismiss_expanded, 42),
-            (self.interval_control, auto_repeat_visible, 54),
-            (self.count_control, auto_repeat_visible, 46),
-        )
+        controls = ((self.dismiss_control, self._dismiss_expanded, 54),)
         for widget, visible, height in controls:
             target_height = dp(height if visible else 0)
             widget.disabled = not visible
@@ -2134,11 +2124,6 @@ class AlarmAppSettingsPage(BoxLayout):
     def _toggle_auto_dismiss_expanded(self):
         self._dismiss_expanded = not self._dismiss_expanded
         self._sync_setting_controls()
-
-    def _toggle_auto_snooze_expanded(self):
-        if self.editor.auto_snooze_enabled:
-            self._auto_snooze_expanded = not self._auto_snooze_expanded
-            self._sync_setting_controls()
 
     def _build(self):
         self.card = RoundedPanel(fill=CARD, radius=dp(26), orientation="vertical",
@@ -2289,22 +2274,12 @@ class AlarmAppSettingsPage(BoxLayout):
         self.content.add_widget(volume_row)
         self.content.add_widget(self._separator())
 
-        vibration = BoxLayout(orientation="horizontal", spacing=dp(8),
-                              size_hint_y=None, height=dp(36))
-        vib_holder = AnchorLayout(anchor_x="center", anchor_y="center", size_hint=(None, 1), width=dp(28))
-        vib_holder.add_widget(VibrationIcon(color=SUB, size=(dp(23), dp(25))))
-        vibration.add_widget(vib_holder)
-        vib_title = self._label("Vibration", 12, TEXT, False, dp(26))
-        vib_label_holder = AnchorLayout(
-            anchor_x="left", anchor_y="center", size_hint_x=1,
+        self.vibration_row, self.vibration_switch = self._toggle_header(
+            "VIBRATION", VibrationIcon, self.editor.vibrate,
+            self._vibration_changed, self._open_vibration_settings,
+            "Tap to open vibration settings",
         )
-        vib_label_holder.add_widget(vib_title)
-        vibration.add_widget(vib_label_holder)
-        self.vibration_switch = PillSwitch(value=bool(self.editor.vibrate),
-                                           on_change=self._vibration_changed,
-                                           size=(dp(60), dp(27)))
-        vibration.add_widget(self.vibration_switch)
-        self.content.add_widget(vibration)
+        self.content.add_widget(self.vibration_row)
         self.content.add_widget(self._separator())
 
         self.snooze_header, self.snooze_switch = self._toggle_header(
@@ -2315,9 +2290,9 @@ class AlarmAppSettingsPage(BoxLayout):
         self.content.add_widget(self.snooze_header)
         self.content.add_widget(self._separator())
 
-        # Auto Snooze is part of Auto-Dismiss: enabling it also enables the ring timer.
-        self._dismiss_expanded = bool(self.editor.auto_snooze_enabled)
-        self._auto_snooze_expanded = bool(self.editor.auto_snooze_enabled)
+        # Auto-Dismiss and Auto Snooze are separate settings rows.
+        # Auto Snooze internally requires a ring-duration timeout.
+        self._dismiss_expanded = False
         self.dismiss_header, self.dismiss_switch = self._toggle_header(
             "AUTO-DISMISS", AutoDismissIcon,
             bool(self.editor.auto_dismiss_enabled or self.editor.auto_snooze_enabled),
@@ -2334,23 +2309,10 @@ class AlarmAppSettingsPage(BoxLayout):
         self.content.add_widget(self.dismiss_control)
         self.auto_snooze_row, self.auto_snooze_switch = self._toggle_header(
             "AUTO SNOOZE", SnoozeIcon, self.editor.auto_snooze_enabled,
-            self._auto_snooze_toggled, self._toggle_auto_snooze_expanded,
+            self._auto_snooze_toggled, self._open_auto_snooze_settings,
             self._auto_snooze_summary(),
         )
         self.content.add_widget(self.auto_snooze_row)
-        self.interval_control = DurationRow(
-            "REPEAT AFTER", "Stay silent this long before ringing again",
-            int(self.editor.auto_snooze_interval_sec), 3, 3600,
-            lambda val: setattr(self.editor, "auto_snooze_interval_sec", int(val)),
-            icon=SnoozeIcon, size_hint_y=None, height=dp(54),
-        )
-        self.content.add_widget(self.interval_control)
-        self.count_control = RepeatCountRow(
-            int(self.editor.auto_snooze_max_count),
-            lambda val: setattr(self.editor, "auto_snooze_max_count", int(val)),
-            size_hint_y=None, height=dp(46),
-        )
-        self.content.add_widget(self.count_control)
         self.content.add_widget(self._separator())
         self._sync_setting_controls(animate=False)
         self.error_label = self._label("", 11.5, RED, False, dp(20))
@@ -2372,6 +2334,7 @@ class AlarmAppSettingsPage(BoxLayout):
 
     def _vibration_changed(self, value):
         self.editor.vibrate = bool(value)
+        self.vibration_row.set_summary("On" if value else "Off")
 
     def _snooze_toggled(self, value):
         self.editor.snooze_enabled = bool(value)
@@ -2383,7 +2346,6 @@ class AlarmAppSettingsPage(BoxLayout):
             # Auto Snooze cannot run without the ring-duration timeout.
             self.editor.auto_snooze_enabled = False
             self.auto_snooze_switch.value = False
-            self._auto_snooze_expanded = False
             self._dismiss_expanded = False
         else:
             self._dismiss_expanded = True
@@ -2394,11 +2356,13 @@ class AlarmAppSettingsPage(BoxLayout):
         if value:
             self.editor.auto_dismiss_enabled = True
             self.dismiss_switch.value = True
-            self._dismiss_expanded = True
-            self._auto_snooze_expanded = True
-        else:
-            self._auto_snooze_expanded = False
         self._sync_setting_controls()
+
+    def _open_auto_snooze_settings(self):
+        self.editor.show_auto_snooze_settings()
+
+    def _open_vibration_settings(self):
+        self.editor.show_vibration_settings()
 
     def _open_snooze_settings(self):
         self.editor.show_snooze_settings()
@@ -2489,10 +2453,6 @@ class AlarmAppSettingsPage(BoxLayout):
         )
         self.auto_snooze_switch.value = bool(self.editor.auto_snooze_enabled)
         self.dismiss_control._set_value(int(self.editor.auto_dismiss_sec))
-        self.interval_control._set_value(int(self.editor.auto_snooze_interval_sec))
-        self.count_control.set_value(int(self.editor.auto_snooze_max_count))
-        self._dismiss_expanded = bool(self.editor.auto_snooze_enabled)
-        self._auto_snooze_expanded = bool(self.editor.auto_snooze_enabled)
         self._update_setting_summaries()
         self._sync_setting_controls(animate=False)
         self.error_label.text = self.editor.error_message
@@ -2505,7 +2465,7 @@ class AlarmAppSettingsPage(BoxLayout):
 
 
 class SnoozeSettingsPage(BoxLayout):
-    """Manual Snooze settings only; automatic repeat controls live on the main page."""
+    """Manual delay and an independent maximum number of Snooze presses."""
     def __init__(self, editor, on_back, **kwargs):
         super().__init__(orientation="vertical", padding=(dp(14), dp(12)), spacing=dp(9), **kwargs)
         self.editor = editor
@@ -2542,6 +2502,13 @@ class SnoozeSettingsPage(BoxLayout):
             icon=SnoozeIcon, size_hint_y=None, height=dp(54),
         )
         self.card.add_widget(self.manual_control)
+        self.manual_count_control = RepeatCountRow(
+            int(editor.snooze_max_count),
+            lambda value: setattr(editor, "snooze_max_count", int(value)),
+            title="MAX SNOOZES", subtitle="Manual Snooze presses only",
+            size_hint_y=None, height=dp(46),
+        )
+        self.card.add_widget(self.manual_count_control)
         self.card.add_widget(Widget())
         self.card.add_widget(RoundedActionButton(
             "DONE", callback=on_back, accent=True,
@@ -2550,6 +2517,56 @@ class SnoozeSettingsPage(BoxLayout):
 
     def refresh(self):
         self.manual_control._set_value(int(self.editor.snooze_sec))
+        self.manual_count_control.set_value(int(self.editor.snooze_max_count))
+
+
+class AutoSnoozeSettingsPage(BoxLayout):
+    """Automatic repeat settings; the master switch stays on the main page."""
+    def __init__(self, editor, on_back, **kwargs):
+        super().__init__(orientation="vertical", padding=(dp(14), dp(12)), spacing=dp(9), **kwargs)
+        self.editor = editor
+        top = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(44))
+        top.add_widget(RoundedActionButton("‹ BACK", callback=on_back, accent=False,
+                                           size_hint=(None, None), size=(dp(88), dp(40))))
+        top.add_widget(Label(text="AUTO SNOOZE SETTINGS", color=TEXT, font_size=sp(17), bold=True))
+        self.add_widget(top)
+        self.card = RoundedPanel(fill=CARD, radius=dp(24), orientation="vertical",
+                                 padding=(dp(14), dp(14), dp(14), dp(12)), spacing=dp(9),
+                                 size_hint=(1, 1))
+        self.add_widget(self.card)
+        intro = Label(text="Each automatic ring plays for the ring duration, then stays silent for the repeat interval.",
+                      color=SUB, font_size=sp(11), halign="left", valign="middle",
+                      size_hint_y=None, height=dp(42))
+        intro.bind(size=lambda w, v: setattr(w, "text_size", v))
+        self.card.add_widget(intro)
+        self.ring_control = DurationRow(
+            "RING DURATION", "How long each automatic ring sounds",
+            int(editor.auto_dismiss_sec), 1, 10800,
+            lambda value: setattr(editor, "auto_dismiss_sec", int(value)),
+            icon=AutoDismissIcon, size_hint_y=None, height=dp(54),
+        )
+        self.card.add_widget(self.ring_control)
+        self.interval_control = DurationRow(
+            "REPEAT AFTER", "Silent interval before the next ring",
+            int(editor.auto_snooze_interval_sec), 3, 3600,
+            lambda value: setattr(editor, "auto_snooze_interval_sec", int(value)),
+            icon=SnoozeIcon, size_hint_y=None, height=dp(54),
+        )
+        self.card.add_widget(self.interval_control)
+        self.count_control = RepeatCountRow(
+            int(editor.auto_snooze_max_count),
+            lambda value: setattr(editor, "auto_snooze_max_count", int(value)),
+            title="MAX AUTO REPEATS", subtitle="Automatic repeats only",
+            size_hint_y=None, height=dp(46),
+        )
+        self.card.add_widget(self.count_control)
+        self.card.add_widget(Widget())
+        self.card.add_widget(RoundedActionButton("DONE", callback=on_back, accent=True,
+                                                   size_hint_y=None, height=dp(46)))
+    def refresh(self):
+        self.ring_control._set_value(int(self.editor.auto_dismiss_sec))
+        self.interval_control._set_value(int(self.editor.auto_snooze_interval_sec))
+        self.count_control.set_value(int(self.editor.auto_snooze_max_count))
 
 
 class SoundSelectionPage(BoxLayout):
@@ -2748,6 +2765,10 @@ class AlarmEditorUI(ScreenManager):
         self.snooze_page = SnoozeSettingsPage(editor, on_back=self.show_settings)
         self.snooze_screen.add_widget(self.snooze_page)
         self.add_widget(self.snooze_screen)
+        self.auto_snooze_screen = Screen(name="auto_snooze")
+        self.auto_snooze_page = AutoSnoozeSettingsPage(editor, on_back=self.show_settings)
+        self.auto_snooze_screen.add_widget(self.auto_snooze_page)
+        self.add_widget(self.auto_snooze_screen)
         self.vibration_screen = Screen(name="vibration")
         self.vibration_page = VibrationSelectionPage(editor, self.show_settings)
         self.vibration_screen.add_widget(self.vibration_page)
@@ -2780,6 +2801,11 @@ class AlarmEditorUI(ScreenManager):
         self.snooze_page.refresh()
         self.transition.direction = "left"
         self.current = "snooze"
+
+    def show_auto_snooze(self):
+        self.auto_snooze_page.refresh()
+        self.transition.direction = "left"
+        self.current = "auto_snooze"
 
     def show_auto_dismiss(self):
         """Compatibility route: Auto Dismiss now expands on the main settings page."""

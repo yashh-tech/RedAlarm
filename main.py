@@ -1114,7 +1114,7 @@ class AlarmScheduler:
         for key in due:
             alarm_id, _ = self._pending.pop(key)
             try:
-                self._on_desktop_fire(alarm_id)
+                self._on_desktop_fire(alarm_id, key == alarm_id + "snooze")
             except Exception as exc:
                 # One bad alarm record must never take the others down with
                 # it — print and keep going.
@@ -2460,6 +2460,7 @@ class AlarmEditScreen(Screen):
     vibrate = BooleanProperty(False)
     volume = NumericProperty(1.0)
     snooze_enabled = BooleanProperty(True)
+    snooze_max_count = NumericProperty(3)
     auto_snooze_enabled = BooleanProperty(False)
     auto_snooze_interval_sec = NumericProperty(300)
     auto_snooze_max_count = NumericProperty(3)
@@ -2555,6 +2556,7 @@ class AlarmEditScreen(Screen):
             self.vibrate = False
             self.volume = 1.0
             self.snooze_enabled = True
+            self.snooze_max_count = 3
             self.auto_snooze_enabled = False
             self.auto_snooze_interval_sec = 300
             self.auto_snooze_max_count = 3
@@ -2584,6 +2586,7 @@ class AlarmEditScreen(Screen):
             self.sound_enabled = bool(alarm.get("sound_enabled", True))
             self.vibrate = bool(alarm.get("vibrate", False))
             self.snooze_enabled = bool(alarm.get("snooze_enabled", True))
+            self.snooze_max_count = max(1, min(10, int(alarm.get("snooze_max_count", 3) or 3)))
             self.auto_dismiss_enabled = bool(
                 alarm.get("auto_dismiss_enabled", True)
                 or alarm.get("auto_snooze_enabled", False)
@@ -2622,8 +2625,16 @@ class AlarmEditScreen(Screen):
         self.ui.show_settings()
 
     def show_snooze_settings(self):
-        """Open the dedicated Snooze Settings page inside the editor."""
+        """Open the dedicated Manual Snooze settings page."""
         self.ui.show_snooze()
+
+    def show_auto_snooze_settings(self):
+        """Open the independent Auto Snooze settings page."""
+        self.ui.show_auto_snooze()
+
+    def show_vibration_settings(self):
+        """Open the dedicated vibration settings page."""
+        self.ui.show_vibration()
 
     def show_picker(self):
         self.ui.show_picker()
@@ -3062,6 +3073,7 @@ class AlarmEditScreen(Screen):
         try:
             dismiss_seconds = int(self.auto_dismiss_sec)
             snooze_seconds = int(self.snooze_sec)
+            snooze_max_count = int(self.snooze_max_count)
             auto_snooze_interval_seconds = int(self.auto_snooze_interval_sec)
             auto_snooze_max_count = int(self.auto_snooze_max_count)
             volume = max(0.0, min(1.0, float(self.volume)))
@@ -3071,6 +3083,8 @@ class AlarmEditScreen(Screen):
             return self._fail("Auto-dismiss must be between 1 second and 3 Hr.")
         if not 3 <= snooze_seconds <= 10800:
             return self._fail("Snooze must be between 3 seconds and 3 Hr.")
+        if not 1 <= snooze_max_count <= 10:
+            return self._fail("Maximum manual Snoozes must be between 1 and 10.")
         if not 3 <= auto_snooze_interval_seconds <= 3600:
             return self._fail("Auto Snooze interval must be between 3 seconds and 1 Hr.")
         if not 1 <= auto_snooze_max_count <= 10:
@@ -3102,6 +3116,7 @@ class AlarmEditScreen(Screen):
             "auto_dismiss_enabled": bool(self.auto_dismiss_enabled or self.auto_snooze_enabled),
             "snooze_sec": snooze_seconds,
             "snooze_enabled": bool(self.snooze_enabled),
+            "snooze_max_count": snooze_max_count,
             "auto_snooze_enabled": bool(self.auto_snooze_enabled),
             "auto_snooze_interval_sec": auto_snooze_interval_seconds,
             "auto_snooze_max_count": auto_snooze_max_count,
@@ -3153,7 +3168,9 @@ class AlarmRingScreen(Screen):
         self.alarm_id = alarm["id"]
         self.time_text = format_time(alarm["hour"], alarm["minute"])
         self.label_text = alarm.get("label") or "Alarm"
-        self.snooze_enabled = bool(alarm.get("snooze_enabled", True))
+        manual_used = max(0, int(alarm.get("manual_snooze_count", 0) or 0))
+        manual_max = max(1, min(10, int(alarm.get("snooze_max_count", 3) or 3)))
+        self.snooze_enabled = bool(alarm.get("snooze_enabled", True)) and manual_used < manual_max
         self.auto_dismiss_enabled = bool(
             alarm.get("auto_dismiss_enabled", True)
             or alarm.get("auto_snooze_enabled", False)
@@ -3330,8 +3347,21 @@ class AlarmRingScreen(Screen):
             self.finish(reason="dismiss")
 
     def snooze_pressed(self):
-        if self._ringing:
-            self.finish(reason="snooze")
+        if not self._ringing:
+            return
+        app = App.get_running_app()
+        alarm = app.store.get(self.alarm_id) if app else None
+        if not alarm or not bool(alarm.get("snooze_enabled", True)):
+            return
+        used = max(0, int(alarm.get("manual_snooze_count", 0) or 0))
+        maximum = max(1, min(10, int(alarm.get("snooze_max_count", 3) or 3)))
+        if used >= maximum:
+            self.snooze_enabled = False
+            return
+        alarm["manual_snooze_count"] = used + 1
+        app.store.put(alarm)
+        self.snooze_enabled = (used + 1) < maximum
+        self.finish(reason="snooze")
 
     def finish(self, reason):
         # Stop sound first. Snooze replaces the ringing card with a snoozed card.
@@ -3352,6 +3382,9 @@ class AlarmRingScreen(Screen):
                 app.scheduler.schedule_snooze(alarm, snooze_trigger)
             elif reason != "delete":
                 app.scheduler.cancel_snooze(alarm)
+                # Dismiss ends this episode; manual and automatic allowances reset.
+                if alarm.pop("manual_snooze_count", None) is not None:
+                    app.store.put(alarm)
                 # One-time alarms switch themselves off after ringing.
                 # Repeating ones stay on (next occurrence already queued).
                 if not any(alarm.get("days") or []):
@@ -3883,7 +3916,7 @@ class RedAlarmApp(App):
             return
         self.handle_alarm_fired(alarm_id)
 
-    def handle_alarm_fired(self, alarm_id):
+    def handle_alarm_fired(self, alarm_id, is_snooze=False):
         alarm = self.store.get(alarm_id)
         native_ring_active = False
         if ANDROID and alarm:
@@ -3915,6 +3948,10 @@ class RedAlarmApp(App):
                 print("[RedAlarm] could not reconcile delayed native alarm:", exc)
         if not alarm.get("enabled", True) and not native_ring_active:
             return
+        if not is_snooze:
+            # A fresh scheduled alarm starts a new manual Snooze allowance.
+            if alarm.pop("manual_snooze_count", None) is not None:
+                self.store.put(alarm)
 
         # Repeating alarms: queue the next occurrence right away. Looking
         # 30s ahead guarantees a slightly-early timer can't re-queue the

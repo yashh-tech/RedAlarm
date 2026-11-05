@@ -58,15 +58,29 @@ def main() -> int:
         require(marker in main_source, "setting persistence marker missing: " + marker)
     require("def start_selection(self):" in main_source,
             "explicit Select action must open selection mode with zero selected alarms")
-    require("RING DURATION" in module and "REPEAT AFTER" in module
-            and "RepeatCountRow(" in module and "def _auto_snooze_toggled(self, value):" in module
+    require("class AutoSnoozeSettingsPage(BoxLayout):" in module
+            and "def show_auto_snooze(self):" in module
             and "self.editor.auto_dismiss_enabled = True" in module,
-            "Auto Snooze must be linked to Auto-Dismiss with ring duration, repeat interval, and maximum repeats")
+            "Auto Snooze must be a separate page with its own ring duration, interval and repeat limit")
     manual_page = module.split("class SnoozeSettingsPage(BoxLayout):", 1)[1].split(
+        "class AutoSnoozeSettingsPage(BoxLayout):", 1
+    )[0]
+    auto_page = module.split("class AutoSnoozeSettingsPage(BoxLayout):", 1)[1].split(
         "class SoundSelectionPage(BoxLayout):", 1
     )[0]
-    require("MANUAL SNOOZE DURATION" in manual_page and "AUTO SNOOZE" not in manual_page,
-            "Manual Snooze settings must remain separate from Auto Snooze")
+    require("MANUAL SNOOZE DURATION" in manual_page and "MAX SNOOZES" in manual_page
+            and "AUTO SNOOZE" not in manual_page,
+            "Manual Snooze page must have its own delay and maximum count, separate from Auto Snooze")
+    require("RING DURATION" in auto_page and "REPEAT AFTER" in auto_page
+            and "MAX AUTO REPEATS" in auto_page,
+            "Auto Snooze page must have ring duration, silent interval and independent maximum")
+    require("self.action.bind(on_release=lambda *_: on_open())" in module
+            and "self.auto_snooze_row, self.auto_snooze_switch" in module
+            and "self._open_auto_snooze_settings" in module,
+            "Setting rows must open their menu from the full action bar, with a separate toggle")
+    require("snooze_max_count" in main_source and "MAX SNOOZES" in module
+            and "auto_snooze_max_count" in main_source,
+            "Manual and automatic snooze limits must persist independently")
     require('or alarm.get("auto_snooze_enabled", False)' in main_source
             and 'bool(self.auto_dismiss_enabled or self.auto_snooze_enabled)' in main_source,
             "Loading/saving an Auto Snooze alarm must also enable Auto-Dismiss")

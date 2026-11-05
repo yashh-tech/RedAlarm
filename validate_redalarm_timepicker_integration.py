@@ -311,13 +311,22 @@ def main() -> int:
             or 'config.optBoolean("auto_snooze_enabled", false)' not in ring_service_text
             or "scheduleAutoSnoozeAfterDismiss" not in ring_service_text):
         fail("Auto Snooze must force the native ring timeout and schedule the repeat after silence")
-    if ('config.optInt("snooze_sec", 300)' not in ring_bridge_text
-            or "autoSnoozeCountKey(alarmId), used + 1" not in ring_bridge_text):
-        fail("Manual Snooze must keep its own delay and consume the shared repeat count")
+    manual_action_start = ring_bridge_text.find('if ("snooze".equals(kind)) {')
+    manual_action_end = ring_bridge_text.find('} else if ("dismiss".equals(kind)) {', manual_action_start)
+    manual_action_text = ring_bridge_text[manual_action_start:manual_action_end] if manual_action_start >= 0 and manual_action_end >= 0 else ""
+    if ('config.optInt("snooze_sec", 300)' not in manual_action_text
+            or "manualSnoozeCountKey(alarmId), used + 1" not in manual_action_text
+            or 'config.optInt("snooze_max_count", 3)' not in ring_bridge_text
+            or "autoSnoozeCountKey(alarmId)" in manual_action_text):
+        fail("Manual Snooze must use its own delay and independent maximum counter")
+    if "autoSnoozeCountKey(alarmId), used + 1" not in ring_bridge_text:
+        fail("Auto Snooze must retain its separate automatic-repeat counter")
     if "RedAlarmNativeBridge.canSnooze(context, id, config)" not in ring_overlay_text:
-        fail("Unlocked overlay must hide manual Snooze after the shared maximum is used")
+        fail("Unlocked overlay must hide manual Snooze after its own maximum is used")
+    if 'manual_snooze_count:" + id, 0' not in ring_service_text:
+        fail("Native service must reset the manual Snooze allowance on a normal alarm fire")
     print("PASS: alarm checkboxes use a fixed-size centred layout")
-    print("PASS: ringing screens hide countdowns while native service keeps internal ring timing and auto repeats")
+    print("PASS: ringing screens hide countdowns; native service keeps independent manual/automatic snooze counters")
     print("PASS: active screen boundaries and obsolete picker handlers")
     print("ALL STATIC REGRESSION CHECKS PASSED; device tests are still required.")
     return 0

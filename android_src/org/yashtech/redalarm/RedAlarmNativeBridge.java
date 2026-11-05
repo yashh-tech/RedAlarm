@@ -51,6 +51,7 @@ public final class RedAlarmNativeBridge {
     static String timeKey(String id) { return "time:" + id; }
     static String snoozeKey(String id) { return "snooze:" + id; }
     static String autoSnoozeCountKey(String id) { return "auto_snooze_count:" + id; }
+    static String manualSnoozeCountKey(String id) { return "manual_snooze_count:" + id; }
     static String ringingKey(String id) { return "ringing:" + id; }
 
     public static void scheduleAlarm(Context context, String alarmId, String alarmJson,
@@ -159,9 +160,8 @@ public final class RedAlarmNativeBridge {
     public static boolean canSnooze(Context context, String alarmId, JSONObject config) {
         if (context == null || TextUtils.isEmpty(alarmId) || config == null) return false;
         if (!config.optBoolean("snooze_enabled", true)) return false;
-        if (!config.optBoolean("auto_snooze_enabled", false)) return true;
-        int maximum = Math.max(1, Math.min(10, config.optInt("auto_snooze_max_count", 3)));
-        int used = prefs(context.getApplicationContext()).getInt(autoSnoozeCountKey(alarmId), 0);
+        int maximum = Math.max(1, Math.min(10, config.optInt("snooze_max_count", 3)));
+        int used = prefs(context.getApplicationContext()).getInt(manualSnoozeCountKey(alarmId), 0);
         return used < maximum;
     }
 
@@ -198,15 +198,12 @@ public final class RedAlarmNativeBridge {
             try {
                 JSONObject config = new JSONObject(raw);
                 if (!canSnooze(app, alarmId, config)) return false;
-                // Manual Snooze always uses its own delay. When Auto Snooze is
-                // enabled, this manual action still consumes one shared repeat.
+                // Manual Snooze uses its own delay and its own independent limit.
                 int seconds = Math.max(3, Math.min(10800,
                         config.optInt("snooze_sec", 300)));
-                if (config.optBoolean("auto_snooze_enabled", false)) {
-                    SharedPreferences p = prefs(app);
-                    int used = p.getInt(autoSnoozeCountKey(alarmId), 0);
-                    p.edit().putInt(autoSnoozeCountKey(alarmId), used + 1).apply();
-                }
+                SharedPreferences p = prefs(app);
+                int used = p.getInt(manualSnoozeCountKey(alarmId), 0);
+                p.edit().putInt(manualSnoozeCountKey(alarmId), used + 1).apply();
                 scheduleAlarm(app, alarmId, raw, getStorePath(app),
                         System.currentTimeMillis() + seconds * 1000L, true);
             } catch (JSONException e) {
@@ -215,7 +212,8 @@ public final class RedAlarmNativeBridge {
             }
         } else if ("dismiss".equals(kind)) {
             cancelAlarm(app, alarmId, true);
-            prefs(app).edit().remove(autoSnoozeCountKey(alarmId)).apply();
+            prefs(app).edit().remove(autoSnoozeCountKey(alarmId))
+                    .remove(manualSnoozeCountKey(alarmId)).apply();
         } else {
             return false;
         }
