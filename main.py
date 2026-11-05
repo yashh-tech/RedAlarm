@@ -2614,6 +2614,10 @@ class AlarmEditScreen(Screen):
     def show_settings(self):
         self.ui.show_settings()
 
+    def show_snooze_settings(self):
+        """Open the dedicated Snooze Settings page inside the editor."""
+        self.ui.show_snooze()
+
     def show_picker(self):
         self.ui.show_picker()
 
