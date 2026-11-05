@@ -198,15 +198,14 @@ public final class RedAlarmNativeBridge {
             try {
                 JSONObject config = new JSONObject(raw);
                 if (!canSnooze(app, alarmId, config)) return false;
-                int seconds;
-                SharedPreferences p = prefs(app);
+                // Manual Snooze always uses its own delay. When Auto Snooze is
+                // enabled, this manual action still consumes one shared repeat.
+                int seconds = Math.max(3, Math.min(10800,
+                        config.optInt("snooze_sec", 300)));
                 if (config.optBoolean("auto_snooze_enabled", false)) {
+                    SharedPreferences p = prefs(app);
                     int used = p.getInt(autoSnoozeCountKey(alarmId), 0);
-                    seconds = Math.max(3, Math.min(3600,
-                            config.optInt("auto_snooze_interval_sec", 300)));
                     p.edit().putInt(autoSnoozeCountKey(alarmId), used + 1).apply();
-                } else {
-                    seconds = Math.max(3, Math.min(10800, config.optInt("snooze_sec", 300)));
                 }
                 scheduleAlarm(app, alarmId, raw, getStorePath(app),
                         System.currentTimeMillis() + seconds * 1000L, true);

@@ -32,13 +32,8 @@ final class RedAlarmUnlockedOverlay {
     private static final String TAG = "RedAlarmNative";
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
-    private static Context appContext;
     private static WindowManager windowManager;
     private static View overlayView;
-    private static TextView countdownView;
-    private static String activeAlarmId = "";
-    private static int fallbackDurationSeconds = 5;
-    private static long fallbackDeadlineElapsed;
 
     private RedAlarmUnlockedOverlay() { }
 
@@ -79,13 +74,6 @@ final class RedAlarmUnlockedOverlay {
         SharedPreferences prefs = context.getSharedPreferences("redalarm_native_alarms_v1", Context.MODE_PRIVATE);
         if (!prefs.getBoolean("ringing:" + id, false)
                 || !id.equals(prefs.getString("ringing_id", ""))) return;
-
-        appContext = context;
-        activeAlarmId = id;
-        fallbackDurationSeconds = Math.max(1, Math.min(10800,
-                config.optInt("auto_dismiss_sec", 5)));
-        fallbackDeadlineElapsed = android.os.SystemClock.elapsedRealtime()
-                + fallbackDurationSeconds * 1000L;
 
         int hour24 = Math.max(0, Math.min(23, config.optInt("hour", 7)));
         int minute = Math.max(0, Math.min(59, config.optInt("minute", 0)));
@@ -129,40 +117,14 @@ final class RedAlarmUnlockedOverlay {
         timeParams.bottomMargin = dp(context, 18);
         root.addView(timeView, timeParams);
 
-        LinearLayout countdownCard = new LinearLayout(context);
-        countdownCard.setOrientation(LinearLayout.VERTICAL);
-        countdownCard.setGravity(Gravity.CENTER);
-        countdownCard.setPadding(dp(context, 12), dp(context, 5), dp(context, 12), dp(context, 5));
-        GradientDrawable cardShape = new GradientDrawable();
-        cardShape.setColor(Color.rgb(34, 8, 11));
-        cardShape.setCornerRadius(dp(context, 18));
-        cardShape.setStroke(dp(context, 1), Color.rgb(156, 12, 12));
-        countdownCard.setBackground(cardShape);
-
-        TextView countdownTitle = new TextView(context);
-        countdownTitle.setText("AUTO-DISMISS IN");
-        countdownTitle.setTextColor(Color.rgb(226, 145, 150));
-        countdownTitle.setTextSize(13);
-        countdownTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        countdownTitle.setGravity(Gravity.CENTER);
-        countdownCard.addView(countdownTitle, new LinearLayout.LayoutParams(-1, dp(context, 24)));
-
-        countdownView = new TextView(context);
-        countdownView.setTextColor(Color.WHITE);
-        countdownView.setTextSize(38);
-        countdownView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        countdownView.setGravity(Gravity.CENTER);
-        countdownCard.addView(countdownView, new LinearLayout.LayoutParams(-1, dp(context, 48)));
-        LinearLayout.LayoutParams countdownParams = new LinearLayout.LayoutParams(-1, dp(context, 82));
-        countdownParams.bottomMargin = dp(context, 24);
-        root.addView(countdownCard, countdownParams);
-
         Button snooze = makeButton(context, "Snooze", Color.rgb(48, 48, 53));
         snooze.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) {
                 RedAlarmNativeBridge.performRingAction(context, id, "snooze");
             }
         });
+        snooze.setVisibility(RedAlarmNativeBridge.canSnooze(context, id, config)
+                ? View.VISIBLE : View.GONE);
         LinearLayout.LayoutParams snoozeParams = new LinearLayout.LayoutParams(-1, dp(context, 58));
         snoozeParams.bottomMargin = dp(context, 12);
         root.addView(snooze, snoozeParams);
@@ -195,47 +157,10 @@ final class RedAlarmUnlockedOverlay {
         try {
             overlayView = root;
             windowManager.addView(overlayView, params);
-            updateCountdown();
-            MAIN.removeCallbacks(countdownTick);
-            MAIN.post(countdownTick);
         } catch (Throwable error) {
             Log.e(TAG, "Could not show unlocked ringing overlay", error);
             hideOnMain();
         }
-    }
-
-    private static final Runnable countdownTick = new Runnable() {
-        @Override public void run() {
-            if (overlayView == null || appContext == null || TextUtils.isEmpty(activeAlarmId)
-                    || countdownView == null) return;
-            SharedPreferences prefs = appContext.getSharedPreferences(
-                    "redalarm_native_alarms_v1", Context.MODE_PRIVATE);
-            if (!prefs.getBoolean("ringing:" + activeAlarmId, false)
-                    || !activeAlarmId.equals(prefs.getString("ringing_id", ""))) {
-                hideOnMain();
-                return;
-            }
-            updateCountdown();
-            long started = prefs.getLong("ring_started_elapsed:" + activeAlarmId, 0L);
-            int duration = Math.max(1, prefs.getInt(
-                    "ring_duration_sec:" + activeAlarmId, fallbackDurationSeconds));
-            long deadline = started > 0L ? started + duration * 1000L : fallbackDeadlineElapsed;
-            if (deadline > android.os.SystemClock.elapsedRealtime()) MAIN.postDelayed(this, 250L);
-        }
-    };
-
-    private static void updateCountdown() {
-        if (countdownView == null || appContext == null || TextUtils.isEmpty(activeAlarmId)) return;
-        SharedPreferences prefs = appContext.getSharedPreferences(
-                "redalarm_native_alarms_v1", Context.MODE_PRIVATE);
-        long started = prefs.getLong("ring_started_elapsed:" + activeAlarmId, 0L);
-        int duration = Math.max(1, prefs.getInt(
-                "ring_duration_sec:" + activeAlarmId, fallbackDurationSeconds));
-        long deadline = started > 0L ? started + duration * 1000L : fallbackDeadlineElapsed;
-        long seconds = Math.max(0L,
-                (deadline - android.os.SystemClock.elapsedRealtime() + 999L) / 1000L);
-        countdownView.setText(String.format(java.util.Locale.getDefault(), "%02d:%02d",
-                seconds / 60L, seconds % 60L));
     }
 
     private static Button makeButton(Context context, String title, int color) {
@@ -257,14 +182,10 @@ final class RedAlarmUnlockedOverlay {
     }
 
     private static void hideOnMain() {
-        MAIN.removeCallbacks(countdownTick);
         View oldView = overlayView;
         WindowManager oldManager = windowManager;
         overlayView = null;
-        countdownView = null;
         windowManager = null;
-        appContext = null;
-        activeAlarmId = "";
         if (oldView != null && oldManager != null) {
             try { oldManager.removeViewImmediate(oldView); }
             catch (Throwable ignored) { }

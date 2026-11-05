@@ -515,39 +515,6 @@
             halign: "left"
             text_size: self.size
 
-        # ---- big, unmissable auto-dismiss countdown ----
-        BoxLayout:
-            orientation: "vertical"
-            size_hint_y: None
-            height: "150dp"
-            padding: "10dp"
-            canvas.before:
-                Color:
-                    rgba: 0.22, 0.05, 0.06, 0.92
-                RoundedRectangle:
-                    pos: self.pos
-                    size: self.size
-                    radius: [dp(20)]
-                Color:
-                    rgba: COL_RED
-                Line:
-                    rounded_rectangle: (self.x, self.y, self.width, self.height, dp(20))
-                    width: dp(1.4)
-
-            Label:
-                text: "AUTO-DISMISS IN" if root.auto_dismiss_enabled else "AUTO-DISMISS OFF"
-                font_size: "13sp"
-                bold: True
-                color: 0.90, 0.60, 0.60, 1
-                size_hint_y: None
-                height: "20dp"
-
-            Label:
-                text: root.countdown_text
-                font_size: "76sp"
-                bold: True
-                color: 1, 1, 1, 1
-
         Widget:
 
         HomeButton:

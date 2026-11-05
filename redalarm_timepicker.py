@@ -1977,11 +1977,11 @@ class RepeatCountRow(BoxLayout):
         self.value = max(1, min(10, int(value)))
         self.on_change = on_change
         labels = BoxLayout(orientation="vertical", spacing=dp(1))
-        title = Label(text="MAX SNOOZES", color=SUB, font_size=sp(11.5),
+        title = Label(text="MAX REPEATS", color=SUB, font_size=sp(11.5),
                       bold=True, halign="left", valign="middle",
                       size_hint_y=None, height=dp(21))
         title.bind(size=lambda w, v: setattr(w, "text_size", v))
-        subtitle = Label(text="Manual + automatic snoozes", color=(0.54, 0.54, 0.58, 1),
+        subtitle = Label(text="Includes manual Snooze actions", color=(0.54, 0.54, 0.58, 1),
                          font_size=sp(9.5), halign="left", valign="middle",
                          size_hint_y=None, height=dp(18))
         subtitle.bind(size=lambda w, v: setattr(w, "text_size", v))
@@ -2006,7 +2006,7 @@ class RepeatCountRow(BoxLayout):
 
     def _open_choices(self):
         content = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
-        heading = Label(text="MAXIMUM SNOOZE COUNT", color=TEXT, font_size=sp(12),
+        heading = Label(text="MAXIMUM REPEAT COUNT", color=TEXT, font_size=sp(12),
                         bold=True, size_hint_y=None, height=dp(24))
         content.add_widget(heading)
         choices = GridLayout(cols=2, spacing=dp(7), size_hint_y=None,
@@ -2078,30 +2078,53 @@ class AlarmAppSettingsPage(BoxLayout):
         return row, row.switch
 
     def _dismiss_summary(self):
-        if not self.editor.auto_dismiss_enabled:
-            return "Off  •  Tap to choose duration"
-        return "Stops each ringing session after {}".format(
-            format_duration(int(self.editor.auto_dismiss_sec))
+        if not (self.editor.auto_dismiss_enabled or self.editor.auto_snooze_enabled):
+            return "Off  •  Tap to choose ring duration"
+        summary = "Ring for {}".format(format_duration(int(self.editor.auto_dismiss_sec)))
+        if self.editor.auto_snooze_enabled:
+            summary += "  •  Repeat after {} (max {})".format(
+                format_duration(int(self.editor.auto_snooze_interval_sec)),
+                int(self.editor.auto_snooze_max_count),
+            )
+        return summary
+
+    def _auto_snooze_summary(self):
+        if not self.editor.auto_snooze_enabled:
+            return "Off  •  Automatically repeat after each ring"
+        return "Every {}  •  Up to {} repeats".format(
+            format_duration(int(self.editor.auto_snooze_interval_sec)),
+            int(self.editor.auto_snooze_max_count),
         )
 
     def _update_setting_summaries(self):
         self.snooze_header.set_summary(
-            "On  •  Tap to open Snooze Settings" if self.editor.snooze_enabled
-            else "Off  •  Tap to open Snooze Settings"
+            "On  •  Tap to set manual Snooze delay" if self.editor.snooze_enabled
+            else "Off  •  Tap to set manual Snooze delay"
         )
         self.dismiss_header.set_summary(self._dismiss_summary())
+        self.auto_snooze_row.set_summary(self._auto_snooze_summary())
 
     def _sync_setting_controls(self, animate=True):
-        widget = self.dismiss_control
-        target_height = dp(54 if self._dismiss_expanded else 0)
-        widget.disabled = not self._dismiss_expanded
-        Animation.cancel_all(widget)
-        if animate:
-            Animation(height=target_height, opacity=1.0 if self._dismiss_expanded else 0.0,
-                      d=0.18, t="out_quad").start(widget)
-        else:
-            widget.height = target_height
-            widget.opacity = 1.0 if self._dismiss_expanded else 0.0
+        auto_repeat_visible = bool(
+            self._dismiss_expanded and self._auto_snooze_expanded
+            and self.editor.auto_snooze_enabled
+        )
+        controls = (
+            (self.dismiss_control, self._dismiss_expanded, 54),
+            (self.auto_snooze_row, self._dismiss_expanded, 42),
+            (self.interval_control, auto_repeat_visible, 54),
+            (self.count_control, auto_repeat_visible, 46),
+        )
+        for widget, visible, height in controls:
+            target_height = dp(height if visible else 0)
+            widget.disabled = not visible
+            Animation.cancel_all(widget)
+            if animate:
+                Animation(height=target_height, opacity=1.0 if visible else 0.0,
+                          d=0.18, t="out_quad").start(widget)
+            else:
+                widget.height = target_height
+                widget.opacity = 1.0 if visible else 0.0
         self._update_setting_summaries()
 
     def expand_auto_dismiss(self):
@@ -2111,6 +2134,11 @@ class AlarmAppSettingsPage(BoxLayout):
     def _toggle_auto_dismiss_expanded(self):
         self._dismiss_expanded = not self._dismiss_expanded
         self._sync_setting_controls()
+
+    def _toggle_auto_snooze_expanded(self):
+        if self.editor.auto_snooze_enabled:
+            self._auto_snooze_expanded = not self._auto_snooze_expanded
+            self._sync_setting_controls()
 
     def _build(self):
         self.card = RoundedPanel(fill=CARD, radius=dp(26), orientation="vertical",
@@ -2287,21 +2315,42 @@ class AlarmAppSettingsPage(BoxLayout):
         self.content.add_widget(self.snooze_header)
         self.content.add_widget(self._separator())
 
-        # Auto-dismiss is deliberately independent from Snooze and expands in place.
-        self._dismiss_expanded = False
+        # Auto Snooze is part of Auto-Dismiss: enabling it also enables the ring timer.
+        self._dismiss_expanded = bool(self.editor.auto_snooze_enabled)
+        self._auto_snooze_expanded = bool(self.editor.auto_snooze_enabled)
         self.dismiss_header, self.dismiss_switch = self._toggle_header(
-            "AUTO-DISMISS", AutoDismissIcon, self.editor.auto_dismiss_enabled,
+            "AUTO-DISMISS", AutoDismissIcon,
+            bool(self.editor.auto_dismiss_enabled or self.editor.auto_snooze_enabled),
             self._auto_dismiss_toggled, self._toggle_auto_dismiss_expanded,
             self._dismiss_summary(),
         )
         self.content.add_widget(self.dismiss_header)
         self.dismiss_control = DurationRow(
-            "AUTO-DISMISS DURATION", "Stop every ringing session after",
-            int(self.editor.auto_dismiss_sec), 1, 3600,
+            "RING DURATION", "How long each ringing session sounds",
+            int(self.editor.auto_dismiss_sec), 1, 10800,
             lambda val: setattr(self.editor, "auto_dismiss_sec", val),
             icon=AutoDismissIcon, size_hint_y=None, height=dp(54),
         )
         self.content.add_widget(self.dismiss_control)
+        self.auto_snooze_row, self.auto_snooze_switch = self._toggle_header(
+            "AUTO SNOOZE", SnoozeIcon, self.editor.auto_snooze_enabled,
+            self._auto_snooze_toggled, self._toggle_auto_snooze_expanded,
+            self._auto_snooze_summary(),
+        )
+        self.content.add_widget(self.auto_snooze_row)
+        self.interval_control = DurationRow(
+            "REPEAT AFTER", "Stay silent this long before ringing again",
+            int(self.editor.auto_snooze_interval_sec), 3, 3600,
+            lambda val: setattr(self.editor, "auto_snooze_interval_sec", int(val)),
+            icon=SnoozeIcon, size_hint_y=None, height=dp(54),
+        )
+        self.content.add_widget(self.interval_control)
+        self.count_control = RepeatCountRow(
+            int(self.editor.auto_snooze_max_count),
+            lambda val: setattr(self.editor, "auto_snooze_max_count", int(val)),
+            size_hint_y=None, height=dp(46),
+        )
+        self.content.add_widget(self.count_control)
         self.content.add_widget(self._separator())
         self._sync_setting_controls(animate=False)
         self.error_label = self._label("", 11.5, RED, False, dp(20))
@@ -2330,7 +2379,26 @@ class AlarmAppSettingsPage(BoxLayout):
 
     def _auto_dismiss_toggled(self, value):
         self.editor.auto_dismiss_enabled = bool(value)
-        self._update_setting_summaries()
+        if not value:
+            # Auto Snooze cannot run without the ring-duration timeout.
+            self.editor.auto_snooze_enabled = False
+            self.auto_snooze_switch.value = False
+            self._auto_snooze_expanded = False
+            self._dismiss_expanded = False
+        else:
+            self._dismiss_expanded = True
+        self._sync_setting_controls()
+
+    def _auto_snooze_toggled(self, value):
+        self.editor.auto_snooze_enabled = bool(value)
+        if value:
+            self.editor.auto_dismiss_enabled = True
+            self.dismiss_switch.value = True
+            self._dismiss_expanded = True
+            self._auto_snooze_expanded = True
+        else:
+            self._auto_snooze_expanded = False
+        self._sync_setting_controls()
 
     def _open_snooze_settings(self):
         self.editor.show_snooze_settings()
@@ -2416,8 +2484,15 @@ class AlarmAppSettingsPage(BoxLayout):
         self.volume_control.value = float(self.editor.volume)
         self.vibration_switch.value = bool(self.editor.vibrate)
         self.snooze_switch.value = bool(self.editor.snooze_enabled)
-        self.dismiss_switch.value = bool(self.editor.auto_dismiss_enabled)
+        self.dismiss_switch.value = bool(
+            self.editor.auto_dismiss_enabled or self.editor.auto_snooze_enabled
+        )
+        self.auto_snooze_switch.value = bool(self.editor.auto_snooze_enabled)
         self.dismiss_control._set_value(int(self.editor.auto_dismiss_sec))
+        self.interval_control._set_value(int(self.editor.auto_snooze_interval_sec))
+        self.count_control.set_value(int(self.editor.auto_snooze_max_count))
+        self._dismiss_expanded = bool(self.editor.auto_snooze_enabled)
+        self._auto_snooze_expanded = bool(self.editor.auto_snooze_enabled)
         self._update_setting_summaries()
         self._sync_setting_controls(animate=False)
         self.error_label.text = self.editor.error_message
@@ -2430,12 +2505,11 @@ class AlarmAppSettingsPage(BoxLayout):
 
 
 class SnoozeSettingsPage(BoxLayout):
-    """Dedicated Snooze page: manual duration and independent Auto Snooze controls."""
+    """Manual Snooze settings only; automatic repeat controls live on the main page."""
     def __init__(self, editor, on_back, **kwargs):
         super().__init__(orientation="vertical", padding=(dp(14), dp(12)), spacing=dp(9), **kwargs)
         self.editor = editor
         self.on_back = on_back
-        self._expanded = bool(editor.auto_snooze_enabled)
 
         top = BoxLayout(orientation="horizontal", spacing=dp(8),
                         size_hint_y=None, height=dp(44))
@@ -2454,7 +2528,7 @@ class SnoozeSettingsPage(BoxLayout):
         )
         self.add_widget(self.card)
         intro = Label(
-            text="Choose the manual snooze delay and configure automatic repeats.",
+            text="Choose the delay used when you manually press Snooze.",
             color=SUB, font_size=sp(11), halign="left", valign="middle",
             size_hint_y=None, height=dp(34),
         )
@@ -2462,84 +2536,20 @@ class SnoozeSettingsPage(BoxLayout):
         self.card.add_widget(intro)
 
         self.manual_control = DurationRow(
-            "MANUAL SNOOZE DURATION", "Used when Auto Snooze is OFF",
+            "MANUAL SNOOZE DURATION", "Used when you press the Snooze button",
             int(editor.snooze_sec), 3, 3600,
             lambda value: setattr(editor, "snooze_sec", int(value)),
             icon=SnoozeIcon, size_hint_y=None, height=dp(54),
         )
         self.card.add_widget(self.manual_control)
-
-        self.auto_row = SettingOptionRow(
-            "AUTO SNOOZE", "snooze", self._auto_summary(),
-            bool(editor.auto_snooze_enabled), self._auto_toggled,
-            self._toggle_expanded,
-        )
-        self.card.add_widget(self.auto_row)
-        self.interval_control = DurationRow(
-            "AUTO SNOOZE INTERVAL", "Wait before the next ringing session",
-            int(editor.auto_snooze_interval_sec), 3, 3600,
-            lambda value: self._interval_changed(value),
-            icon=SnoozeIcon, size_hint_y=None, height=dp(54),
-        )
-        self.card.add_widget(self.interval_control)
-        self.count_control = RepeatCountRow(
-            int(editor.auto_snooze_max_count), self._count_changed,
-            size_hint_y=None, height=dp(46),
-        )
-        self.card.add_widget(self.count_control)
         self.card.add_widget(Widget())
         self.card.add_widget(RoundedActionButton(
             "DONE", callback=on_back, accent=True,
             size_hint_y=None, height=dp(46),
         ))
-        self._sync_controls(animate=False)
-
-    def _auto_summary(self):
-        if not self.editor.auto_snooze_enabled:
-            return "Off  •  Tap to configure automatic repeats"
-        return "Every {}  •  Up to {} {}".format(
-            format_duration(int(self.editor.auto_snooze_interval_sec)),
-            int(self.editor.auto_snooze_max_count),
-            "time" if int(self.editor.auto_snooze_max_count) == 1 else "times",
-        )
-
-    def _sync_controls(self, animate=True):
-        for widget, height in ((self.interval_control, 54), (self.count_control, 46)):
-            target = dp(height if self._expanded else 0)
-            widget.disabled = not self._expanded
-            Animation.cancel_all(widget)
-            if animate:
-                Animation(height=target, opacity=1.0 if self._expanded else 0.0,
-                          d=0.18, t="out_quad").start(widget)
-            else:
-                widget.height = target
-                widget.opacity = 1.0 if self._expanded else 0.0
-        self.auto_row.set_summary(self._auto_summary())
-
-    def _toggle_expanded(self):
-        self._expanded = not self._expanded
-        self._sync_controls()
-
-    def _auto_toggled(self, value):
-        self.editor.auto_snooze_enabled = bool(value)
-        self._expanded = bool(value)
-        self._sync_controls()
-
-    def _interval_changed(self, value):
-        self.editor.auto_snooze_interval_sec = int(value)
-        self.auto_row.set_summary(self._auto_summary())
-
-    def _count_changed(self, value):
-        self.editor.auto_snooze_max_count = int(value)
-        self.auto_row.set_summary(self._auto_summary())
 
     def refresh(self):
         self.manual_control._set_value(int(self.editor.snooze_sec))
-        self.auto_row.switch.value = bool(self.editor.auto_snooze_enabled)
-        self.interval_control._set_value(int(self.editor.auto_snooze_interval_sec))
-        self.count_control.set_value(int(self.editor.auto_snooze_max_count))
-        self._expanded = bool(self.editor.auto_snooze_enabled)
-        self._sync_controls(animate=False)
 
 
 class SoundSelectionPage(BoxLayout):

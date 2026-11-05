@@ -290,17 +290,34 @@ def main() -> int:
     if 'size: dp(24), dp(24)' not in kv_text or 'anchor_y: "center"' not in kv_text:
         fail("Alarm selection checkbox must be a fixed-size, vertically centred control")
     ring_activity_path = ROOT / "android_src" / "org" / "yashtech" / "redalarm" / "RedAlarmRingActivity.java"
+    ring_overlay_path = ROOT / "android_src" / "org" / "yashtech" / "redalarm" / "RedAlarmUnlockedOverlay.java"
     ring_service_path = ROOT / "android_src" / "org" / "yashtech" / "redalarm" / "RedAlarmRingingService.java"
-    if not ring_activity_path.is_file() or not ring_service_path.is_file():
-        fail("Native ringing activity/service is missing")
+    ring_bridge_path = ROOT / "android_src" / "org" / "yashtech" / "redalarm" / "RedAlarmNativeBridge.java"
+    if not all(path.is_file() for path in (ring_activity_path, ring_overlay_path, ring_service_path, ring_bridge_path)):
+        fail("Native ringing activity, overlay, service, or bridge is missing")
     ring_activity_text = ring_activity_path.read_text(encoding="utf-8")
+    ring_overlay_text = ring_overlay_path.read_text(encoding="utf-8")
     ring_service_text = ring_service_path.read_text(encoding="utf-8")
-    if 'countdownTitle.setText("AUTO-DISMISS IN")' not in ring_activity_text or 'countdownValue.setText' not in ring_activity_text:
-        fail("Native lock-screen alarm must display an auto-dismiss countdown")
+    ring_bridge_text = ring_bridge_path.read_text(encoding="utf-8")
+    if any(marker in ring_activity_text for marker in ("countdownTitle", "countdownValue", "countdownTick", "AUTO-DISMISS IN")):
+        fail("Native lock-screen ring UI must not display an auto-dismiss countdown")
+    if any(marker in ring_overlay_text for marker in ("countdownView", "countdownTick", "updateCountdown", "AUTO-DISMISS IN")):
+        fail("Unlocked ringing overlay must not display an auto-dismiss countdown")
+    if any(marker in kv_text for marker in ("root.countdown_text", "AUTO-DISMISS IN", "AUTO-DISMISS OFF")):
+        fail("Kivy ringing screen must not display an auto-dismiss countdown")
     if 'ring_started_elapsed:' not in ring_service_text or 'ring_duration_sec:' not in ring_service_text:
-        fail("Native ringing service must save the visible countdown deadline")
+        fail("Native ringing service must retain its internal ring-duration timing")
+    if ('config.optBoolean("auto_dismiss_enabled", true)' not in ring_service_text
+            or 'config.optBoolean("auto_snooze_enabled", false)' not in ring_service_text
+            or "scheduleAutoSnoozeAfterDismiss" not in ring_service_text):
+        fail("Auto Snooze must force the native ring timeout and schedule the repeat after silence")
+    if ('config.optInt("snooze_sec", 300)' not in ring_bridge_text
+            or "autoSnoozeCountKey(alarmId), used + 1" not in ring_bridge_text):
+        fail("Manual Snooze must keep its own delay and consume the shared repeat count")
+    if "RedAlarmNativeBridge.canSnooze(context, id, config)" not in ring_overlay_text:
+        fail("Unlocked overlay must hide manual Snooze after the shared maximum is used")
     print("PASS: alarm checkboxes use a fixed-size centred layout")
-    print("PASS: native lock-screen ring screen displays the auto-dismiss countdown")
+    print("PASS: ringing screens hide countdowns while native service keeps internal ring timing and auto repeats")
     print("PASS: active screen boundaries and obsolete picker handlers")
     print("ALL STATIC REGRESSION CHECKS PASSED; device tests are still required.")
     return 0

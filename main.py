@@ -5,7 +5,7 @@ Screens (all managed by one ScreenManager):
     home  -> analog clock + "Check Alarms" / "Set New Alarm"
     list  -> all saved alarms with iOS-style on/off toggles
     edit  -> add / edit an alarm (12-hour time + AM/PM)
-    ring  -> full-screen ringing alert with a big auto-dismiss countdown
+    ring  -> full-screen ringing alert with Snooze / Dismiss controls
 
 Read alarm.kv next to this file: every `id:` used via `self.ids.xxx` here
 is defined there.
@@ -2584,12 +2584,15 @@ class AlarmEditScreen(Screen):
             self.sound_enabled = bool(alarm.get("sound_enabled", True))
             self.vibrate = bool(alarm.get("vibrate", False))
             self.snooze_enabled = bool(alarm.get("snooze_enabled", True))
-            self.auto_dismiss_enabled = bool(alarm.get("auto_dismiss_enabled", True))
+            self.auto_dismiss_enabled = bool(
+                alarm.get("auto_dismiss_enabled", True)
+                or alarm.get("auto_snooze_enabled", False)
+            )
             try:
                 self.volume = max(0.0, min(1.0, float(alarm.get("volume", 1.0))))
             except (TypeError, ValueError):
                 self.volume = 1.0
-            self.auto_dismiss_sec = max(1, min(3600, int(alarm.get("auto_dismiss_sec", 5) or 5)))
+            self.auto_dismiss_sec = max(1, min(10800, int(alarm.get("auto_dismiss_sec", 5) or 5)))
             self.snooze_sec = max(3, min(3600, int(alarm.get("snooze_sec", 300) or 300)))
             self.auto_snooze_enabled = bool(alarm.get("auto_snooze_enabled", False))
             self.auto_snooze_interval_sec = max(
@@ -2597,6 +2600,10 @@ class AlarmEditScreen(Screen):
             )
             self.auto_snooze_max_count = max(
                 1, min(10, int(alarm.get("auto_snooze_max_count", 3) or 3))
+            )
+            # Auto Snooze always requires the ring-duration timeout.
+            self.auto_dismiss_enabled = bool(
+                self.auto_dismiss_enabled or self.auto_snooze_enabled
             )
 
         self.ampm = self.time_state["ampm"]
@@ -3092,7 +3099,7 @@ class AlarmEditScreen(Screen):
             "volume": volume,
             "sound_enabled": bool(self.sound_enabled),
             "auto_dismiss_sec": dismiss_seconds,
-            "auto_dismiss_enabled": bool(self.auto_dismiss_enabled),
+            "auto_dismiss_enabled": bool(self.auto_dismiss_enabled or self.auto_snooze_enabled),
             "snooze_sec": snooze_seconds,
             "snooze_enabled": bool(self.snooze_enabled),
             "auto_snooze_enabled": bool(self.auto_snooze_enabled),
@@ -3147,7 +3154,10 @@ class AlarmRingScreen(Screen):
         self.time_text = format_time(alarm["hour"], alarm["minute"])
         self.label_text = alarm.get("label") or "Alarm"
         self.snooze_enabled = bool(alarm.get("snooze_enabled", True))
-        self.auto_dismiss_enabled = bool(alarm.get("auto_dismiss_enabled", True))
+        self.auto_dismiss_enabled = bool(
+            alarm.get("auto_dismiss_enabled", True)
+            or alarm.get("auto_snooze_enabled", False)
+        )
 
         native_playback = False
         if ANDROID:
@@ -3213,13 +3223,20 @@ class AlarmRingScreen(Screen):
             1, int(alarm.get("auto_dismiss_sec", 5) or 5)
         )
         # Stop audio at the selected duration; the UI grace below must not extend it.
-        if self.auto_dismiss_enabled:
+        if self.auto_dismiss_enabled and ANDROID and native_playback:
+            # The native foreground service owns the Android timeout and
+            # Auto Snooze scheduling. Avoid a competing Kivy timeout.
+            self._remaining_seconds = 0
+            self.countdown_text = ""
+            self._countdown_event = None
+        elif self.auto_dismiss_enabled:
             if self._sound is not None:
                 self._sound_stop_event = Clock.schedule_once(
                     lambda _dt, ring_session=session: self._stop_ring_sound(ring_session),
                     float(configured_dismiss_seconds),
                 )
-            # Extremely short settings need a startup/visibility grace.
+            # Desktop/legacy fallback keeps its private timeout; no timer
+            # is rendered on the ringing screen.
             dismiss_grace_seconds = 1 if configured_dismiss_seconds <= 3 else 0
             self._remaining_seconds = configured_dismiss_seconds + dismiss_grace_seconds
             self._update_countdown_text()
@@ -3228,7 +3245,7 @@ class AlarmRingScreen(Screen):
             )
         else:
             self._remaining_seconds = 0
-            self.countdown_text = "OFF"
+            self.countdown_text = ""
             self._countdown_event = None
 
     def _stop_ring_sound(self, session=None):

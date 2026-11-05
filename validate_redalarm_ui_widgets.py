@@ -53,11 +53,23 @@ def main() -> int:
         "sound_enabled = BooleanProperty(True)", "snooze_enabled = BooleanProperty(True)",
         "auto_dismiss_enabled = BooleanProperty(True)", '"sound_enabled": bool(self.sound_enabled)',
         '"snooze_enabled": bool(self.snooze_enabled)',
-        '"auto_dismiss_enabled": bool(self.auto_dismiss_enabled)',
+        '"auto_dismiss_enabled": bool(self.auto_dismiss_enabled or self.auto_snooze_enabled)',
     ):
         require(marker in main_source, "setting persistence marker missing: " + marker)
     require("def start_selection(self):" in main_source,
             "explicit Select action must open selection mode with zero selected alarms")
+    require("RING DURATION" in module and "REPEAT AFTER" in module
+            and "RepeatCountRow(" in module and "def _auto_snooze_toggled(self, value):" in module
+            and "self.editor.auto_dismiss_enabled = True" in module,
+            "Auto Snooze must be linked to Auto-Dismiss with ring duration, repeat interval, and maximum repeats")
+    manual_page = module.split("class SnoozeSettingsPage(BoxLayout):", 1)[1].split(
+        "class SoundSelectionPage(BoxLayout):", 1
+    )[0]
+    require("MANUAL SNOOZE DURATION" in manual_page and "AUTO SNOOZE" not in manual_page,
+            "Manual Snooze settings must remain separate from Auto Snooze")
+    require('or alarm.get("auto_snooze_enabled", False)' in main_source
+            and 'bool(self.auto_dismiss_enabled or self.auto_snooze_enabled)' in main_source,
+            "Loading/saving an Auto Snooze alarm must also enable Auto-Dismiss")
     require('text: "CANCEL" if root.selection_mode else "SELECT"' in (ROOT / "alarm.kv").read_text(encoding="utf-8"),
             "alarm-list SELECT/CANCEL control is missing")
     kv_source = (ROOT / "alarm.kv").read_text(encoding="utf-8")

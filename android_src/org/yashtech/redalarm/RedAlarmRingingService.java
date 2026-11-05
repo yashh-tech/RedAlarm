@@ -56,7 +56,8 @@ public final class RedAlarmRingingService extends Service {
             getSharedPreferences("redalarm_native_alarms_v1", MODE_PRIVATE).edit()
                     .putInt("auto_snooze_count:" + id, 0).apply();
         }
-        boolean autoDismissEnabled = config.optBoolean("auto_dismiss_enabled", true);
+        boolean autoDismissEnabled = config.optBoolean("auto_dismiss_enabled", true)
+                || config.optBoolean("auto_snooze_enabled", false);
         int duration = autoDismissEnabled ? Math.max(1, Math.min(10800, config.optInt("auto_dismiss_sec", 5))) : 0;
         final long ringStartedElapsed = android.os.SystemClock.elapsedRealtime();
         getSharedPreferences("redalarm_native_alarms_v1", MODE_PRIVATE).edit()
