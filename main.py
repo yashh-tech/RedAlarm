@@ -53,7 +53,11 @@ from kivy.effects.dampedscroll import DampedScrollEffect
 from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
-from redalarm_timepicker import AlarmEditorUI, RoundedActionButton, RoundedPanel, format_duration
+from redalarm_timepicker import (
+    AlarmEditorUI, RoundedActionButton, RoundedPanel, format_duration,
+    SpeakerIcon, RepeatIcon, VolumeIcon, AutoDismissIcon, SnoozeIcon,
+    VibrationIcon, SettingsSlidersIcon,
+)
 
 
 APP_TITLE = "Red Alarm"
@@ -2976,13 +2980,18 @@ class AlarmEditScreen(Screen):
         repeat_text = format_days(alarm.get("days"))
         volume_text = ("{}%".format(int(round(float(alarm.get("volume", 0.80)) * 100)))
                        if alarm.get("sound_enabled", True) else "Off")
+        dismiss_enabled = bool(
+            alarm.get("auto_dismiss_enabled", True) or alarm.get("auto_snooze_enabled", False)
+        )
+        dismiss_duration = format_duration(alarm.get("auto_dismiss_sec", 5))
+        dismiss_text = "{}  •  {}".format("On" if dismiss_enabled else "Off", dismiss_duration)
         details = [
-            ("Sound", (alarm.get("sound_name") or "Default beep") if alarm.get("sound_enabled", True) else "Off"),
-            ("Repeat", repeat_text),
-            ("Volume", volume_text),
-            ("Vibration", "On" if alarm.get("vibrate") else "Off"),
-            ("Auto-dismiss", format_duration(alarm.get("auto_dismiss_sec", 5)) if alarm.get("auto_dismiss_enabled", True) else "Off"),
-            ("Snooze", format_duration(alarm.get("snooze_sec", 60)) if alarm.get("snooze_enabled", True) else "Off"),
+            ("Sound", (alarm.get("sound_name") or "Default beep") if alarm.get("sound_enabled", True) else "Off", SpeakerIcon),
+            ("Repeat", repeat_text, RepeatIcon),
+            ("Volume", volume_text, VolumeIcon),
+            ("Vibration", "On" if alarm.get("vibrate") else "Off", VibrationIcon),
+            ("Auto-dismiss", dismiss_text, AutoDismissIcon),
+            ("Snooze", format_duration(alarm.get("snooze_sec", 60)) if alarm.get("snooze_enabled", True) else "Off", SnoozeIcon),
         ]
         content = BoxLayout(orientation="vertical", padding=(dp(18), dp(14), dp(18), dp(14)), spacing=dp(8))
         title = Label(text="ALARM SET FOR {}".format(day_label.upper()), color=(156/255, 12/255, 12/255, 1),
@@ -3001,14 +3010,34 @@ class AlarmEditScreen(Screen):
 
         details_panel = RoundedPanel(fill=(0.060, 0.060, 0.068, 1), radius=dp(16),
                                       orientation="vertical", padding=(dp(12), dp(8), dp(12), dp(8)),
-                                      spacing=dp(2), size_hint_y=None, height=dp(162))
-        for key, value in details:
-            row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(23), spacing=dp(8))
-            left = Label(text=key, color=(0.64, 0.64, 0.68, 1), font_size="11sp",
-                         halign="left", valign="middle", size_hint_x=0.42)
+                                      spacing=dp(2), size_hint_y=None, height=dp(214))
+        panel_header = BoxLayout(orientation="horizontal", size_hint_y=None,
+                                 height=dp(28), spacing=dp(8))
+        panel_header.add_widget(SettingsSlidersIcon(color=(0.78, 0.78, 0.82, 1),
+                                                    size=(dp(22), dp(22))))
+        panel_title = Label(text="Alarm Options", color=(0.96, 0.96, 0.98, 1),
+                            font_size="13sp", bold=True, halign="left", valign="middle")
+        panel_title.bind(size=lambda w, v: setattr(w, "text_size", v))
+        panel_header.add_widget(panel_title)
+        close_button = Button(text="×", size_hint=(None, None), size=(dp(28), dp(28)),
+                              background_normal="", background_down="",
+                              background_color=(0, 0, 0, 0), color=(0.88, 0.88, 0.91, 1),
+                              font_size="23sp")
+        close_button.bind(on_release=lambda *_: popup.dismiss())
+        panel_header.add_widget(close_button)
+        details_panel.add_widget(panel_header)
+
+        for key, value, icon_type in details:
+            row = BoxLayout(orientation="horizontal", size_hint_y=None,
+                            height=dp(26), spacing=dp(8))
+            row.add_widget(icon_type(color=(0.72, 0.72, 0.76, 1),
+                                    size_hint=(None, None), size=(dp(22), dp(22))))
+            left = Label(text=key, color=(0.78, 0.78, 0.82, 1), font_size="11.5sp",
+                         halign="left", valign="middle", size_hint_x=0.40)
             left.bind(size=lambda w, v: setattr(w, "text_size", v))
-            right = Label(text=str(value), color=(0.975, 0.975, 0.985, 1), font_size="11sp", bold=True,
-                          halign="right", valign="middle", size_hint_x=0.58)
+            right = Label(text=str(value), color=(0.975, 0.975, 0.985, 1),
+                          font_size="11.5sp", bold=True, halign="right",
+                          valign="middle", size_hint_x=0.60)
             right.bind(size=lambda w, v: setattr(w, "text_size", v))
             row.add_widget(left)
             row.add_widget(right)
