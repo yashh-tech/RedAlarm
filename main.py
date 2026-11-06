@@ -53,11 +53,7 @@ from kivy.effects.dampedscroll import DampedScrollEffect
 from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
-from redalarm_timepicker import (
-    AlarmEditorUI, RoundedActionButton, RoundedPanel, format_duration,
-    SpeakerIcon, RepeatIcon, VolumeIcon, AutoDismissIcon, SnoozeIcon,
-    VibrationIcon, SettingsSlidersIcon,
-)
+from redalarm_timepicker import AlarmEditorUI, RoundedActionButton, RoundedPanel, format_duration, SpeakerIcon, RepeatIcon, VolumeIcon, AutoDismissIcon, SnoozeIcon, VibrationIcon, SettingsSlidersIcon
 
 
 APP_TITLE = "Red Alarm"
