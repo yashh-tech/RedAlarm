@@ -2981,6 +2981,13 @@ class AlarmEditScreen(Screen):
         )
         dismiss_duration = format_duration(alarm.get("auto_dismiss_sec", 5))
         dismiss_text = "{}  •  {}".format("On" if dismiss_enabled else "Off", dismiss_duration)
+        auto_snooze_enabled = bool(alarm.get("auto_snooze_enabled", False))
+        auto_snooze_interval = format_duration(alarm.get("auto_snooze_interval_sec", 300))
+        auto_snooze_max_count = max(1, min(10, int(alarm.get("auto_snooze_max_count", 3) or 3)))
+        auto_snooze_text = (
+            "On  •  Every {}  •  Max {}".format(auto_snooze_interval, auto_snooze_max_count)
+            if auto_snooze_enabled else "Off"
+        )
         details = [
             ("Sound", (alarm.get("sound_name") or "Default beep") if alarm.get("sound_enabled", True) else "Off", SpeakerIcon),
             ("Repeat", repeat_text, RepeatIcon),
@@ -2988,6 +2995,7 @@ class AlarmEditScreen(Screen):
             ("Vibration", "On" if alarm.get("vibrate") else "Off", VibrationIcon),
             ("Auto-dismiss", dismiss_text, AutoDismissIcon),
             ("Snooze", format_duration(alarm.get("snooze_sec", 60)) if alarm.get("snooze_enabled", True) else "Off", SnoozeIcon),
+            ("Auto Snooze", auto_snooze_text, SnoozeIcon),
         ]
         content = BoxLayout(orientation="vertical", padding=(dp(18), dp(14), dp(18), dp(14)), spacing=dp(8))
         title = Label(text="ALARM SET FOR {}".format(day_label.upper()), color=(156/255, 12/255, 12/255, 1),
@@ -3006,7 +3014,7 @@ class AlarmEditScreen(Screen):
 
         details_panel = RoundedPanel(fill=(0.060, 0.060, 0.068, 1), radius=dp(16),
                                       orientation="vertical", padding=(dp(12), dp(8), dp(12), dp(8)),
-                                      spacing=dp(2), size_hint_y=None, height=dp(214))
+                                      spacing=dp(2), size_hint_y=None, height=dp(240))
         panel_header = BoxLayout(orientation="horizontal", size_hint_y=None,
                                  height=dp(28), spacing=dp(8))
         panel_header.add_widget(SettingsSlidersIcon(color=(0.78, 0.78, 0.82, 1),
