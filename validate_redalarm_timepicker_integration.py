@@ -77,6 +77,18 @@ def main() -> int:
     compile(main_text, str(MAIN), "exec")
     compile(module_text, str(MODULE), "exec")
     print("PASS: main.py and redalarm_timepicker.py compile")
+    if ('AudioAttributes.USAGE_MEDIA if use_media_volume else AudioAttributes.USAGE_ALARM' not in main_text
+            or 'load_and_play(path, loop=False, volume=1.0, use_media_volume=True)' not in main_text):
+        fail("Sound preview must use full player gain and the device media-volume stream without changing alarm ringing")
+    if any(name not in main_text for name in ("Classic Beep", "Soft Breeze", "Gentle Chime", "Pop Alert", "Double Pop")):
+        fail("One or more expected built-in preview tones are missing")
+    if "effect_cls=None" in module_text:
+        fail("ScrollView must not set effect_cls=None; Kivy calls this value as a class")
+    if 'LABEL_WHITE = (1, 1, 1, 1)' not in module_text:
+        fail("Alarm-label text must use pure white")
+    if "AlarmContextMenu(" in main_text or "     def _fire_long_press(self, touch):" in main_text:
+        fail("A malformed/undefined long-press context-menu regression remains")
+    print("PASS: media-volume sound previews, built-in tones, valid ScrollView configuration, readable label, and long-press syntax")
 
     notif_start = main_text.find("def android_show_next_alarm_notification")
     notif_end = main_text.find("def android_cancel_next_alarm_notification", notif_start)
@@ -229,7 +241,7 @@ def main() -> int:
         fail("Tapping/holding a checkbox must not conflict with the row long-press timer")
     legacy_checkbox_markers = ("width: dp(30) if root.selection_mode else 0" in kv_text
                               and "opacity: 1 if root.selection_mode else 0" in kv_text)
-    animated_checkbox_markers = ("width: dp(30) * root.selection_reveal" in kv_text
+    animated_checkbox_markers = ("width: dp(30)" in kv_text
                                 and "opacity: root.selection_reveal" in kv_text
                                 and "selection_reveal = NumericProperty(0.0)" in main_text)
     if not (legacy_checkbox_markers or animated_checkbox_markers):
@@ -248,16 +260,29 @@ def main() -> int:
     if not (
         'kwargs["disabled_foreground_color"] = (1, 1, 1, 1)' in module_text
         or ('kwargs["disabled_foreground_color"] = LABEL_WHITE' in module_text
-            and 'LABEL_WHITE = (249 / 255.0, 249 / 255.0, 249 / 255.0, 1.0)' in module_text)
+            and 'LABEL_WHITE = (1, 1, 1, 1)' in module_text)
     ):
         fail("Label input disabled text must remain readable")
     if "def _get_line_options(self):" not in module_text or 'options["color"] = LABEL_WHITE' not in module_text:
         fail("Alarm label must force #F9F9F9 on Kivy's rendered text lines")
     if 'text: "CANCEL" if root.selection_mode else "SELECT"' not in kv_text or "def start_selection(self):" not in main_text:
         fail("Alarm list must provide an explicit Select control that opens empty selection mode")
-    if ('size: dp(136), dp(48)' not in kv_text
-            or 'on_press: root.cancel_selection() if root.selection_mode else root.start_selection()' not in kv_text):
-        fail("Select control must have a large, immediate touch target")
+    if ('size_hint: 1, None' not in kv_text or 'height: dp(52)' not in kv_text
+            or 'on_release: root.toggle_selection_mode()' not in kv_text
+            or "def toggle_selection_mode(self):" not in main_text):
+        fail("Select control must toggle selection mode on a completed tap")
+    if ('height: dp(52)' not in kv_text
+            or 'size_hint: 1, None' not in kv_text):
+        fail("Select control must occupy the full available width")
+    if ("percent_text = StringProperty" not in module_text
+            or "def set_alarm_volume(self, value):" not in main_text
+            or "load_and_play(path, loop=False, volume=1.0, use_media_volume=True)" not in main_text):
+        fail("Alarm-volume slider and media-stream sound preview wiring are missing")
+    root_manager_text = main_text.split("class RootManager(ScreenManager):", 1)[1].split(
+        "# ======================================================================\n# 5. APP", 1
+    )[0]
+    if "def on_touch_down(" in root_manager_text or "def on_touch_up(" in root_manager_text:
+        fail("Root-level gestures must not intercept navigation/touch controls")
     if "selection_toolbar_height=dp(124)" not in main_text:
         fail("Selection toolbar must reserve enough height for its action buttons")
     print("PASS: long-press checkboxes/action bar, individual delete confirmation, and bulk actions")
@@ -265,17 +290,43 @@ def main() -> int:
     if 'size: dp(24), dp(24)' not in kv_text or 'anchor_y: "center"' not in kv_text:
         fail("Alarm selection checkbox must be a fixed-size, vertically centred control")
     ring_activity_path = ROOT / "android_src" / "org" / "yashtech" / "redalarm" / "RedAlarmRingActivity.java"
+    ring_overlay_path = ROOT / "android_src" / "org" / "yashtech" / "redalarm" / "RedAlarmUnlockedOverlay.java"
     ring_service_path = ROOT / "android_src" / "org" / "yashtech" / "redalarm" / "RedAlarmRingingService.java"
-    if not ring_activity_path.is_file() or not ring_service_path.is_file():
-        fail("Native ringing activity/service is missing")
+    ring_bridge_path = ROOT / "android_src" / "org" / "yashtech" / "redalarm" / "RedAlarmNativeBridge.java"
+    if not all(path.is_file() for path in (ring_activity_path, ring_overlay_path, ring_service_path, ring_bridge_path)):
+        fail("Native ringing activity, overlay, service, or bridge is missing")
     ring_activity_text = ring_activity_path.read_text(encoding="utf-8")
+    ring_overlay_text = ring_overlay_path.read_text(encoding="utf-8")
     ring_service_text = ring_service_path.read_text(encoding="utf-8")
-    if 'countdownTitle.setText("AUTO-DISMISS IN")' not in ring_activity_text or 'countdownValue.setText' not in ring_activity_text:
-        fail("Native lock-screen alarm must display an auto-dismiss countdown")
+    ring_bridge_text = ring_bridge_path.read_text(encoding="utf-8")
+    if any(marker in ring_activity_text for marker in ("countdownTitle", "countdownValue", "countdownTick", "AUTO-DISMISS IN")):
+        fail("Native lock-screen ring UI must not display an auto-dismiss countdown")
+    if any(marker in ring_overlay_text for marker in ("countdownView", "countdownTick", "updateCountdown", "AUTO-DISMISS IN")):
+        fail("Unlocked ringing overlay must not display an auto-dismiss countdown")
+    if any(marker in kv_text for marker in ("root.countdown_text", "AUTO-DISMISS IN", "AUTO-DISMISS OFF")):
+        fail("Kivy ringing screen must not display an auto-dismiss countdown")
     if 'ring_started_elapsed:' not in ring_service_text or 'ring_duration_sec:' not in ring_service_text:
-        fail("Native ringing service must save the visible countdown deadline")
+        fail("Native ringing service must retain its internal ring-duration timing")
+    if ('config.optBoolean("auto_dismiss_enabled", true)' not in ring_service_text
+            or 'config.optBoolean("auto_snooze_enabled", false)' not in ring_service_text
+            or "scheduleAutoSnoozeAfterDismiss" not in ring_service_text):
+        fail("Auto Snooze must force the native ring timeout and schedule the repeat after silence")
+    manual_action_start = ring_bridge_text.find('if ("snooze".equals(kind)) {')
+    manual_action_end = ring_bridge_text.find('} else if ("dismiss".equals(kind)) {', manual_action_start)
+    manual_action_text = ring_bridge_text[manual_action_start:manual_action_end] if manual_action_start >= 0 and manual_action_end >= 0 else ""
+    if ('config.optInt("snooze_sec", 300)' not in manual_action_text
+            or "manualSnoozeCountKey(alarmId), used + 1" not in manual_action_text
+            or 'config.optInt("snooze_max_count", 3)' not in ring_bridge_text
+            or "autoSnoozeCountKey(alarmId)" in manual_action_text):
+        fail("Manual Snooze must use its own delay and independent maximum counter")
+    if "autoSnoozeCountKey(alarmId), used + 1" not in ring_bridge_text:
+        fail("Auto Snooze must retain its separate automatic-repeat counter")
+    if "RedAlarmNativeBridge.canSnooze(context, id, config)" not in ring_overlay_text:
+        fail("Unlocked overlay must hide manual Snooze after its own maximum is used")
+    if 'manual_snooze_count:" + id, 0' not in ring_service_text:
+        fail("Native service must reset the manual Snooze allowance on a normal alarm fire")
     print("PASS: alarm checkboxes use a fixed-size centred layout")
-    print("PASS: native lock-screen ring screen displays the auto-dismiss countdown")
+    print("PASS: ringing screens hide countdowns; native service keeps independent manual/automatic snooze counters")
     print("PASS: active screen boundaries and obsolete picker handlers")
     print("ALL STATIC REGRESSION CHECKS PASSED; device tests are still required.")
     return 0

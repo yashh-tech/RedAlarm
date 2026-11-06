@@ -12,6 +12,7 @@ import wave
 import struct
 
 from kivy.animation import Animation
+from kivy.app import App
 from kivy.core.window import Window
 from kivy.clock import Clock
 from kivy.core.audio import SoundLoader
@@ -29,6 +30,8 @@ from kivy.uix.widget import Widget
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.scrollview import ScrollView
+from kivy.effects.dampedscroll import DampedScrollEffect
+from kivy.effects.scroll import ScrollEffect
 from kivy.uix.textinput import TextInput
 from kivy.graphics import Color, Ellipse, Line, RoundedRectangle, Rectangle, Triangle
 
@@ -42,7 +45,7 @@ TEXT = (0.975, 0.975, 0.985, 1)
 SUB = (0.64, 0.64, 0.68, 1)
 MUTED = (0.36, 0.36, 0.40, 1)
 DIVIDER = (0.14, 0.14, 0.16, 1)
-LABEL_WHITE = (249 / 255.0, 249 / 255.0, 249 / 255.0, 1.0)
+LABEL_WHITE = (1, 1, 1, 1)
 
 def add_rounded_background(widget, fill, radius=18, edge=None, edge_width=0.8):
     """Attach a resize-safe rounded rectangle background to a widget."""
@@ -214,7 +217,13 @@ class VectorPlayButton(Button):
         self._sync()
 
     def set_playing(self, value):
-        self.playing = bool(value)
+        value = bool(value)
+        if self.playing == value:
+            return
+        self.playing = value
+        Animation.cancel_all(self, "opacity")
+        self.opacity = 0.72
+        Animation(opacity=1.0, duration=0.18, t="out_quad").start(self)
 
     def _sync(self, *_):
         x, y = self.pos
@@ -237,10 +246,11 @@ class VectorPlayButton(Button):
         ]
         bar_w = max(dp(2.5), w * 0.095)
         bar_h = h * 0.40
-        self._pause_a.size = (bar_w, bar_h)
-        self._pause_b.size = (bar_w, bar_h)
-        self._pause_a.pos = (x + w * 0.36, cy - bar_h / 2)
-        self._pause_b.pos = (x + w * 0.55, cy - bar_h / 2)
+        stop_side = min(w, h) * 0.30
+        self._pause_a.size = (stop_side, stop_side)
+        self._pause_b.size = (0, 0)
+        self._pause_a.pos = (x + (w - stop_side) / 2, cy - stop_side / 2)
+        self._pause_b.pos = (x + w * 0.55, cy - stop_side / 2)
         self._play_color.rgba = TEXT if not self.playing else (0, 0, 0, 0)
         self._pause_color.rgba = TEXT if self.playing else (0, 0, 0, 0)
 
@@ -297,16 +307,17 @@ def _spinner_tick_path():
     folder = os.path.join(tempfile.gettempdir(), "redalarm_timepicker_test_sounds")
     os.makedirs(folder, exist_ok=True)
     # Versioned filename ensures any older, quieter test tick is not reused.
-    path = os.path.join(folder, "soft_spinner_tick_v2.wav")
+    path = os.path.join(folder, "soft_spinner_tap_v3.wav")
     if not os.path.isfile(path):
         sample_rate = 22050
-        duration = 0.032
+        duration = 0.046
         frames = bytearray()
         for i in range(int(sample_rate * duration)):
             t = i / float(sample_rate)
-            envelope = min(1.0, t * 500.0) * math.exp(-t * 105.0)
-            tone = math.sin(2.0 * math.pi * 1680.0 * t) + 0.28 * math.sin(2.0 * math.pi * 2780.0 * t)
-            sample = int(13500 * envelope * tone)
+            attack = min(1.0, t / 0.0025)
+            envelope = attack * math.exp(-t * 72.0)
+            tone = math.sin(2.0 * math.pi * 720.0 * t) + 0.22 * math.sin(2.0 * math.pi * 1080.0 * t)
+            sample = int(7600 * envelope * tone)
             frames.extend(struct.pack("<h", max(-32768, min(32767, sample))))
         with wave.open(path, "wb") as wav:
             wav.setnchannels(1)
@@ -337,7 +348,7 @@ def _load_spinner_tick(_dt=0):
         path = _spinner_tick_path()
         sound = SoundLoader.load(path)
         if sound is not None:
-            sound.volume = 0.45
+            sound.volume = 0.28
             _SPINNER_TICK_SOUNDS.append(sound)
     except Exception as exc:
         # Tick audio is optional and must never block time selection.
@@ -354,7 +365,7 @@ def _play_spinner_tick():
     """Play a preloaded voice only; never create files or load audio from touch."""
     global _SPINNER_TICK_LAST_AT, _SPINNER_TICK_CURSOR
     now = time.monotonic()
-    if now - _SPINNER_TICK_LAST_AT < 0.028:
+    if now - _SPINNER_TICK_LAST_AT < 0.065:
         return
     if not _SPINNER_TICK_SOUNDS:
         _schedule_spinner_tick_load()
@@ -363,7 +374,7 @@ def _play_spinner_tick():
     _SPINNER_TICK_CURSOR += 1
     try:
         sound.stop()
-        sound.volume = 0.45
+        sound.volume = 0.28
         sound.play()
         _SPINNER_TICK_LAST_AT = now
     except Exception as exc:
@@ -832,7 +843,7 @@ class AlarmLabelInput(TextInput):
         # Do not let disabled-field defaults make the label look like ghost text.
         kwargs["foreground_color"] = LABEL_WHITE
         kwargs["disabled_foreground_color"] = LABEL_WHITE
-        kwargs["hint_text_color"] = (0.82, 0.82, 0.85, 1)
+        kwargs["hint_text_color"] = (1, 1, 1, 1)
         # Android only offers its normal word suggestions for a text IME.
         kwargs["input_type"] = "text"
         kwargs["keyboard_suggestions"] = True
@@ -840,7 +851,10 @@ class AlarmLabelInput(TextInput):
         kwargs["opacity"] = 1
         super().__init__(**kwargs)
         self._apply_readable_colors()
-        self.bind(disabled=self._apply_readable_colors, focus=self._apply_readable_colors, text=self._apply_readable_colors)
+        self.bind(disabled=self._apply_readable_colors, focus=self._apply_readable_colors,
+                  text=self._apply_readable_colors, foreground_color=self._apply_readable_colors,
+                  disabled_foreground_color=self._apply_readable_colors,
+                  hint_text_color=self._apply_readable_colors)
         Clock.schedule_once(self._apply_readable_colors, 0)
         Clock.schedule_once(self._apply_readable_colors, 0.15)
 
@@ -855,7 +869,10 @@ class AlarmLabelInput(TextInput):
     def _apply_readable_colors(self, *_):
         self.foreground_color = LABEL_WHITE
         self.disabled_foreground_color = LABEL_WHITE
-        self.hint_text_color = (0.82, 0.82, 0.85, 1)
+        self.hint_text_color = LABEL_WHITE
+        hint_label = getattr(self, "_hint_text_label", None)
+        if hint_label is not None:
+            hint_label.color = LABEL_WHITE
         # Re-rasterize existing text after restoring the exact requested color.
         self._trigger_refresh_text()
 
@@ -947,14 +964,14 @@ class TimePickerPage(AnchorLayout):
             background_normal="", background_active="",
             background_color=(0, 0, 0, 0),
             foreground_color=LABEL_WHITE, disabled_foreground_color=LABEL_WHITE,
-            hint_text_color=(0.82, 0.82, 0.85, 1),
+            hint_text_color=LABEL_WHITE,
             cursor_color=RED, selection_color=(RED[0], RED[1], RED[2], 0.45),
             font_size=sp(16), padding=(dp(12), dp(8)),
             size_hint_y=None, height=dp(36),
         )
         add_rounded_background(
-            self.label_input, (0.065, 0.065, 0.075, 1), radius=13,
-            edge=(0.20, 0.20, 0.23, 1), edge_width=0.8,
+            self.label_input, (0, 0, 0, 1), radius=13,
+            edge=(RED[0] * 0.72, RED[1] * 0.72, RED[2] * 0.72, 1), edge_width=1.0,
         )
         self.label_input.bind(text=self._label_changed)
         label_block.add_widget(self.label_input)
@@ -1094,6 +1111,7 @@ class DayPill(ToggleButton):
 class VolumeControl(Widget):
     """Custom volume slider, avoiding Kivy's default blue slider thumb."""
     value = NumericProperty(0.58)
+    percent_text = StringProperty("58%")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1110,6 +1128,8 @@ class VolumeControl(Widget):
         Clock.schedule_once(lambda *_: self._sync(), 0.12)
 
     def _sync(self, *_):
+        percent = int(round(max(0.0, min(1.0, float(self.value))) * 100))
+        self.percent_text = "{}%".format(percent)
         h = dp(4)
         d = dp(18)
         y = self.center_y - h / 2
@@ -1387,7 +1407,7 @@ class AlarmEditorMainPage(BoxLayout):
             multiline=False, write_tab=False, background_normal="", background_active="",
             background_color=(0, 0, 0, 0), foreground_color=(1, 1, 1, 1),
             disabled_foreground_color=(1, 1, 1, 1),
-            hint_text_color=(0.82, 0.82, 0.85, 1), cursor_color=(1, 0.16, 0.22, 1),
+            hint_text_color=LABEL_WHITE, cursor_color=(1, 0.16, 0.22, 1),
             disabled=False, opacity=1,
             selection_color=(RED[0], RED[1], RED[2], 0.45),
             font_size=sp(16), padding=(dp(43), dp(8), dp(48), dp(8)),
@@ -1702,7 +1722,10 @@ class DurationRow(BoxLayout):
         self.max_value = int(max_value)
         self.on_change = on_change
 
-        labels = BoxLayout(orientation="vertical", spacing=dp(1), size_hint_x=1)
+        labels = BoxLayout(
+            orientation="vertical", spacing=dp(1),
+            size_hint=(1, None), height=dp(40),
+        )
         title_label = Label(
             text=title, color=SUB, font_size=sp(12), bold=True,
             halign="left", valign="middle", size_hint_y=None, height=dp(21),
@@ -1723,7 +1746,11 @@ class DurationRow(BoxLayout):
             )
             icon_holder.add_widget(icon(color=SUB, size=(dp(23), dp(23))))
             label_row.add_widget(icon_holder)
-            label_row.add_widget(labels)
+            label_holder = AnchorLayout(
+                anchor_x="left", anchor_y="center", size_hint_x=1,
+            )
+            label_holder.add_widget(labels)
+            label_row.add_widget(label_holder)
             self.add_widget(label_row)
         else:
             self.add_widget(labels)
@@ -1797,7 +1824,7 @@ class DurationRow(BoxLayout):
         )
         content.add_widget(title)
 
-        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(3))
+        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(3), effect_cls=DampedScrollEffect)
         choices = BoxLayout(
             orientation="vertical", size_hint_y=None, spacing=dp(8),
             padding=(0, dp(2), dp(2), dp(4)),
@@ -1916,6 +1943,100 @@ class DurationRow(BoxLayout):
 
 
 
+REPEAT_DAY_SHORT = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+REPEAT_DAY_FULL = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def repeat_summary_text(days_selected):
+    """Human repeat summary for a Monday-first list of seven booleans."""
+    picked = [i for i, on in enumerate(list(days_selected or [])[:7]) if on]
+    if not picked:
+        return "Once"
+    chosen = set(picked)
+    weekdays = {0, 1, 2, 3, 4}
+    if chosen == weekdays:
+        return "Every weekday"
+    if chosen == {5, 6}:
+        return "Every weekend"
+    if len(picked) == 7:
+        return "Every day"
+    if weekdays.issubset(chosen):
+        return "Every weekday and " + ", ".join(REPEAT_DAY_FULL[i] for i in picked if i >= 5)
+    if len(picked) == 1:
+        return "Every " + REPEAT_DAY_FULL[picked[0]]
+    return "Every " + ", ".join(REPEAT_DAY_SHORT[i] for i in picked)
+
+
+class RepeatCountRow(BoxLayout):
+    """Compact repeat-count selector matching RedAlarm's rounded red/black controls."""
+    CHOICES = tuple(range(1, 11))
+
+    def __init__(self, value, on_change, title="MAX REPEATS",
+                 subtitle="Automatic repeats only", **kwargs):
+        kwargs.setdefault("size_hint_y", None)
+        kwargs.setdefault("height", dp(46))
+        super().__init__(orientation="horizontal", spacing=dp(8), **kwargs)
+        self.value = max(1, min(10, int(value)))
+        self.on_change = on_change
+        self.title_text = str(title)
+        labels = BoxLayout(orientation="vertical", spacing=dp(1))
+        title = Label(text=title, color=SUB, font_size=sp(11.5),
+                      bold=True, halign="left", valign="middle",
+                      size_hint_y=None, height=dp(21))
+        title.bind(size=lambda w, v: setattr(w, "text_size", v))
+        subtitle = Label(text=subtitle, color=(0.54, 0.54, 0.58, 1),
+                         font_size=sp(9.5), halign="left", valign="middle",
+                         size_hint_y=None, height=dp(18))
+        subtitle.bind(size=lambda w, v: setattr(w, "text_size", v))
+        labels.add_widget(title)
+        labels.add_widget(subtitle)
+        self.add_widget(labels)
+        self.value_button = RoundedActionButton(
+            "", callback=self._open_choices, accent=False,
+            size_hint=(None, None), size=(dp(126), dp(36)),
+        )
+        self.add_widget(self.value_button)
+        self._refresh()
+
+    def _refresh(self):
+        self.value_button.text = "{} {}".format(
+            self.value, "TIME" if self.value == 1 else "TIMES"
+        )
+
+    def set_value(self, value):
+        self.value = max(1, min(10, int(value)))
+        self._refresh()
+
+    def _open_choices(self):
+        content = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
+        heading = Label(text="MAXIMUM " + self.title_text.replace("MAX ", ""), color=TEXT, font_size=sp(12),
+                        bold=True, size_hint_y=None, height=dp(24))
+        content.add_widget(heading)
+        choices = GridLayout(cols=2, spacing=dp(7), size_hint_y=None,
+                             row_default_height=dp(38), row_force_default=True)
+        choices.bind(minimum_height=choices.setter("height"))
+        popup = Popup(title="", content=content, size_hint=(0.82, None),
+                      height=dp(258), background_color=CARD,
+                      separator_height=0, auto_dismiss=True)
+        for option in self.CHOICES:
+            button = RoundedActionButton(
+                "{} {}".format(option, "TIME" if option == 1 else "TIMES"),
+                callback=lambda selected=option: self._choose(selected, popup),
+                accent=(option == self.value),
+                size_hint_y=None, height=dp(38),
+            )
+            choices.add_widget(button)
+        content.add_widget(choices)
+        popup.open()
+
+    def _choose(self, value, popup):
+        self.value = int(value)
+        self._refresh()
+        if self.on_change:
+            self.on_change(self.value)
+        popup.dismiss()
+
+
 class AlarmAppSettingsPage(BoxLayout):
     """Compact settings page wired directly to the real AlarmEditScreen."""
     DAYS = [("M", "Mon"), ("T", "Tue"), ("W", "Wed"),
@@ -1943,18 +2064,79 @@ class AlarmAppSettingsPage(BoxLayout):
                   size=lambda w, *_: setattr(w.rect, "size", w.size))
         return line
 
+    def _toggle_header(self, title, icon_type, value, callback, on_open=None, summary=""):
+        """Use the same touchable, animated PillSwitch row used by Vibration."""
+        icon_kind = {
+            SnoozeIcon: "snooze",
+            AutoDismissIcon: "auto_dismiss",
+            VibrationIcon: "vibration",
+            SpeakerIcon: "sound",
+        }.get(icon_type)
+        if icon_kind is None:
+            raise ValueError("Unsupported setting icon: {}".format(icon_type))
+        row = SettingOptionRow(
+            title, icon_kind, summary, value, callback,
+            on_open or (lambda: None),
+        )
+        return row, row.switch
+
+    def _dismiss_summary(self):
+        if not self.editor.auto_dismiss_enabled:
+            return "Off  •  Tap to choose ring duration"
+        return "Ring for {}".format(format_duration(int(self.editor.auto_dismiss_sec)))
+
+    def _auto_snooze_summary(self):
+        if not self.editor.auto_snooze_enabled:
+            return "Off  •  Tap to set automatic repeat"
+        return "Ring {}  •  Every {}  •  Max {}".format(
+            format_duration(int(self.editor.auto_dismiss_sec)),
+            format_duration(int(self.editor.auto_snooze_interval_sec)),
+            int(self.editor.auto_snooze_max_count),
+        )
+
+    def _update_setting_summaries(self):
+        self.snooze_header.set_summary(
+            "On  •  Tap to set manual Snooze delay" if self.editor.snooze_enabled
+            else "Off  •  Tap to set manual Snooze delay"
+        )
+        self.dismiss_header.set_summary(self._dismiss_summary())
+        self.auto_snooze_row.set_summary(self._auto_snooze_summary())
+        self.vibration_row.set_summary("On" if self.editor.vibrate else "Off")
+
+    def _sync_setting_controls(self, animate=True):
+        controls = ((self.dismiss_control, self._dismiss_expanded, 54),)
+        for widget, visible, height in controls:
+            target_height = dp(height if visible else 0)
+            widget.disabled = not visible
+            Animation.cancel_all(widget)
+            if animate:
+                Animation(height=target_height, opacity=1.0 if visible else 0.0,
+                          d=0.18, t="out_quad").start(widget)
+            else:
+                widget.height = target_height
+                widget.opacity = 1.0 if visible else 0.0
+        self._update_setting_summaries()
+
+    def expand_auto_dismiss(self):
+        self._dismiss_expanded = True
+        self._sync_setting_controls()
+
+    def _toggle_auto_dismiss_expanded(self):
+        self._dismiss_expanded = not self._dismiss_expanded
+        self._sync_setting_controls()
+
     def _build(self):
         self.card = RoundedPanel(fill=CARD, radius=dp(26), orientation="vertical",
-                                 padding=(dp(16), dp(12), dp(16), dp(12)),
-                                 spacing=dp(5), size_hint=(1, 1))
+                                 padding=(dp(14), dp(8), dp(14), dp(8)),
+                                 spacing=dp(3), size_hint=(1, 1))
         self.add_widget(self.card)
 
         # Single-page editor: the spinner is fixed above the scrollable settings.
-        header = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(25), spacing=dp(1))
+        header = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(23), spacing=dp(1))
         header.add_widget(self._label("A L A R M   S E T T I N G S", 12.5, SUB, True, dp(22)))
         self.card.add_widget(header)
 
-        self.wheel_panel = WheelPanel(size_hint_y=None, height=dp(228))
+        self.wheel_panel = WheelPanel(size_hint_y=None, height=dp(206))
         self.hour_wheel = SpinnerWheel(
             list(range(1, 13)), self.editor.time_state["hour"],
             lambda value: self._change_time("hour", value),
@@ -1976,7 +2158,7 @@ class AlarmAppSettingsPage(BoxLayout):
         self._sync_wheel_layout()
 
         label_block = BoxLayout(
-            orientation="vertical", size_hint_y=None, height=dp(56), spacing=dp(3)
+            orientation="vertical", size_hint_y=None, height=dp(84), spacing=dp(3)
         )
         label_block.add_widget(self._label("ALARM LABEL", 10.5, SUB, True, dp(16)))
         self.label_input = AlarmLabelInput(
@@ -1985,32 +2167,46 @@ class AlarmAppSettingsPage(BoxLayout):
             background_normal="", background_active="",
             background_color=(0, 0, 0, 0), foreground_color=LABEL_WHITE,
             disabled_foreground_color=LABEL_WHITE,
-            hint_text_color=(0.82, 0.82, 0.85, 1), cursor_color=(1, 0.16, 0.22, 1),
+            hint_text_color=LABEL_WHITE, cursor_color=LABEL_WHITE,
             disabled=False, opacity=1,
-            selection_color=(RED[0], RED[1], RED[2], 0.45),
+            selection_color=(1, 1, 1, 0.30),
             font_size=sp(16), padding=(dp(12), dp(8)),
             size_hint_y=None, height=dp(36),
         )
         add_rounded_background(
-            self.label_input, (0.065, 0.065, 0.075, 1), radius=13,
-            edge=(0.20, 0.20, 0.23, 1), edge_width=0.8,
+            self.label_input, (0, 0, 0, 1), radius=13,
+            edge=LABEL_WHITE, edge_width=1.0,
         )
         self.label_input.bind(text=self._label_changed)
         label_block.add_widget(self.label_input)
+        self.repeat_summary = Label(
+            text=repeat_summary_text(self.editor.days_selected), color=LABEL_WHITE,
+            font_size=sp(12.5), bold=True, halign="left", valign="middle",
+            padding=(dp(12), 0), shorten=True, shorten_from="right",
+            size_hint_y=None, height=dp(26),
+        )
+        self.repeat_summary.bind(size=lambda w, v: setattr(w, "text_size", v))
+        add_rounded_background(
+            self.repeat_summary, (0.16, 0.03, 0.04, 1), radius=10,
+            edge=(0.86, 0.10, 0.14, 0.55), edge_width=1.0,
+        )
+        label_block.add_widget(self.repeat_summary)
         self.card.add_widget(label_block)
         self.card.add_widget(self._separator())
+        self.editor.bind(days_selected=lambda *_: self.refresh_repeat_summary())
 
+        # Clamped at the top: pulling down must not open a gap above REPEAT.
         scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=0,
-                            scroll_type=["content"], size_hint=(1, 1), scroll_y=1.0)
+                            scroll_type=["content"], size_hint=(1, 1), scroll_y=1.0,
+                            effect_cls=ScrollEffect)
         self.content = BoxLayout(orientation="vertical", size_hint_y=None,
-                                 spacing=dp(5), padding=(0, dp(3), 0, dp(4)))
+                                 spacing=dp(3), padding=(0, dp(1), 0, dp(2)))
         self.content.bind(minimum_height=self.content.setter("height"))
         scroll.add_widget(self.content)
         self.card.add_widget(scroll)
 
-        repeat = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(72), spacing=dp(3))
+        repeat = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(54), spacing=dp(2))
         repeat.add_widget(self._label("REPEAT", 11.5, SUB, True, dp(18)))
-        repeat.add_widget(self._label("Once if no days are selected", 10.5, TEXT, False, dp(16)))
         day_row = BoxLayout(orientation="horizontal", spacing=dp(5), size_hint_y=None, height=dp(34))
         for index, (short, full) in enumerate(self.DAYS):
             button = DayPill(text=short, height=dp(34), size_hint=(1, None))
@@ -2022,7 +2218,7 @@ class AlarmAppSettingsPage(BoxLayout):
         self.content.add_widget(self._separator())
 
         sound_block = BoxLayout(
-            orientation="vertical", size_hint_y=None, height=dp(104), spacing=dp(4)
+            orientation="vertical", size_hint_y=None, height=dp(98), spacing=dp(3)
         )
         sound_block.add_widget(self._label("SOUND", 11.5, SUB, True, dp(18)))
 
@@ -2044,8 +2240,8 @@ class AlarmAppSettingsPage(BoxLayout):
         self.sound_name_label.bind(size=lambda w, v: setattr(w, "text_size", v))
         sound_row.add_widget(self.sound_name_label)
         self.preview_button = VectorPlayButton(
-            callback=self.editor.preview_sound,
-            size_hint=(None, None), size=(dp(34), dp(34)),
+            callback=self.editor.toggle_preview_sound,
+            size_hint=(None, None), size=(dp(42), dp(42)),
         )
         sound_row.add_widget(self.preview_button)
         sound_block.add_widget(sound_row)
@@ -2057,7 +2253,7 @@ class AlarmAppSettingsPage(BoxLayout):
         self.content.add_widget(sound_block)
 
         volume_row = BoxLayout(orientation="horizontal", spacing=dp(8),
-                               size_hint_y=None, height=dp(38))
+                               size_hint_y=None, height=dp(40))
         speaker_holder = AnchorLayout(anchor_x="center", anchor_y="center", size_hint=(None, 1), width=dp(27))
         speaker_holder.add_widget(SpeakerIcon(color=SUB, size=(dp(25), dp(24))))
         volume_row.add_widget(speaker_holder)
@@ -2065,45 +2261,64 @@ class AlarmAppSettingsPage(BoxLayout):
                                             size_hint=(1, 1))
         self.volume_control.bind(value=self._volume_changed)
         volume_row.add_widget(self.volume_control)
-        volume_row.add_widget(self._label("VOL", 9.5, SUB, True, dp(18), halign="right"))
+        self.volume_percent_label = Label(
+            text=self.volume_control.percent_text, color=TEXT, font_size=sp(11),
+            bold=True, size_hint=(None, 1), width=dp(38),
+            halign="right", valign="middle",
+        )
+        self.volume_percent_label.bind(size=lambda w, v: setattr(w, "text_size", v))
+        self.volume_control.bind(
+            percent_text=lambda _widget, value: setattr(self.volume_percent_label, "text", value)
+        )
+        volume_row.add_widget(self.volume_percent_label)
         self.content.add_widget(volume_row)
         self.content.add_widget(self._separator())
 
-        vibration = BoxLayout(orientation="horizontal", spacing=dp(8),
-                              size_hint_y=None, height=dp(40))
-        vib_holder = AnchorLayout(anchor_x="center", anchor_y="center", size_hint=(None, 1), width=dp(28))
-        vib_holder.add_widget(VibrationIcon(color=SUB, size=(dp(23), dp(25))))
-        vibration.add_widget(vib_holder)
-        vib_title = self._label("Vibration", 12, TEXT, False, dp(26))
-        vib_title.size_hint_x = 1
-        vibration.add_widget(vib_title)
-        self.vibration_switch = PillSwitch(value=bool(self.editor.vibrate),
-                                           on_change=self._vibration_changed,
-                                           size=(dp(60), dp(27)))
-        vibration.add_widget(self.vibration_switch)
-        self.content.add_widget(vibration)
+        self.vibration_row, self.vibration_switch = self._toggle_header(
+            "VIBRATION", VibrationIcon, self.editor.vibrate,
+            self._vibration_changed, self._open_vibration_settings,
+            "Tap to open vibration settings",
+        )
+        self.content.add_widget(self.vibration_row)
         self.content.add_widget(self._separator())
 
-        self.snooze_control = DurationRow(
-            "SNOOZE", "Repeat alarm after", int(self.editor.snooze_sec),
-            3, 3600, lambda val: setattr(self.editor, "snooze_sec", val),
-            icon=SnoozeIcon,
-            size_hint_y=None, height=dp(58),
+        self.snooze_header, self.snooze_switch = self._toggle_header(
+            "SNOOZE", SnoozeIcon, self.editor.snooze_enabled,
+            self._snooze_toggled, self._open_snooze_settings,
+            "Tap to open Snooze Settings",
         )
-        self.content.add_widget(self.snooze_control)
+        self.content.add_widget(self.snooze_header)
         self.content.add_widget(self._separator())
+
+        # Auto-Dismiss and Auto Snooze are separate settings rows.
+        # Auto Snooze internally requires a ring-duration timeout.
+        self._dismiss_expanded = False
+        self.dismiss_header, self.dismiss_switch = self._toggle_header(
+            "AUTO-DISMISS", AutoDismissIcon,
+            bool(self.editor.auto_dismiss_enabled or self.editor.auto_snooze_enabled),
+            self._auto_dismiss_toggled, self._toggle_auto_dismiss_expanded,
+            self._dismiss_summary(),
+        )
+        self.content.add_widget(self.dismiss_header)
         self.dismiss_control = DurationRow(
-            "AUTO-DISMISS", "Stop alarm automatically", int(self.editor.auto_dismiss_sec),
-            1, 3600, lambda val: setattr(self.editor, "auto_dismiss_sec", val),
-            icon=AutoDismissIcon,
-            size_hint_y=None, height=dp(58),
+            "RING DURATION", "How long each ringing session sounds",
+            int(self.editor.auto_dismiss_sec), 1, 10800,
+            lambda val: setattr(self.editor, "auto_dismiss_sec", val),
+            icon=AutoDismissIcon, size_hint_y=None, height=dp(54),
         )
         self.content.add_widget(self.dismiss_control)
+        self.auto_snooze_row, self.auto_snooze_switch = self._toggle_header(
+            "AUTO SNOOZE", SnoozeIcon, self.editor.auto_snooze_enabled,
+            self._auto_snooze_toggled, self._open_auto_snooze_settings,
+            self._auto_snooze_summary(),
+        )
+        self.content.add_widget(self.auto_snooze_row)
         self.content.add_widget(self._separator())
+        self._sync_setting_controls(animate=False)
         self.error_label = self._label("", 11.5, RED, False, dp(20))
         self.content.add_widget(self.error_label)
 
-        self.footer = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(46), spacing=dp(10))
+        self.footer = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(44), spacing=dp(10))
         self.footer.add_widget(RoundedActionButton("BACK", callback=self.on_back, accent=False))
         self.delete_button = RoundedActionButton(
             "DELETE", callback=self.editor.delete_alarm, accent=False,
@@ -2115,10 +2330,42 @@ class AlarmAppSettingsPage(BoxLayout):
         Clock.schedule_once(lambda *_: self.refresh_from_editor(), 0)
 
     def _volume_changed(self, _widget, value):
-        self.editor.volume = max(0.0, min(1.0, float(value)))
+        self.editor.set_alarm_volume(value)
 
     def _vibration_changed(self, value):
         self.editor.vibrate = bool(value)
+        self.vibration_row.set_summary("On" if value else "Off")
+
+    def _snooze_toggled(self, value):
+        self.editor.snooze_enabled = bool(value)
+        self._update_setting_summaries()
+
+    def _auto_dismiss_toggled(self, value):
+        self.editor.auto_dismiss_enabled = bool(value)
+        if not value:
+            # Auto Snooze cannot run without the ring-duration timeout.
+            self.editor.auto_snooze_enabled = False
+            self.auto_snooze_switch.value = False
+            self._dismiss_expanded = False
+        else:
+            self._dismiss_expanded = True
+        self._sync_setting_controls()
+
+    def _auto_snooze_toggled(self, value):
+        self.editor.auto_snooze_enabled = bool(value)
+        if value:
+            self.editor.auto_dismiss_enabled = True
+            self.dismiss_switch.value = True
+        self._sync_setting_controls()
+
+    def _open_auto_snooze_settings(self):
+        self.editor.show_auto_snooze_settings()
+
+    def _open_vibration_settings(self):
+        self.editor.show_vibration_settings()
+
+    def _open_snooze_settings(self):
+        self.editor.show_snooze_settings()
 
     def _sync_wheel_layout(self, *_):
         height = max(dp(1), float(self.wheel_panel.height))
@@ -2179,6 +2426,20 @@ class AlarmAppSettingsPage(BoxLayout):
             desired = "down" if self.editor.days_selected[i] else "normal"
             if button.state != desired:
                 button.state = desired
+        self.refresh_repeat_summary()
+
+    def refresh_repeat_summary(self):
+        new_text = repeat_summary_text(self.editor.days_selected)
+        if self.repeat_summary.text == new_text:
+            return
+        Animation.cancel_all(self.repeat_summary)
+
+        def show_new(*_):
+            self.repeat_summary.text = new_text
+            Animation(opacity=1.0, d=0.14, t="in_out_sine").start(self.repeat_summary)
+
+        Animation(opacity=0.0, d=0.09, t="in_out_sine").start(self.repeat_summary)
+        Clock.schedule_once(show_new, 0.09)
 
     def refresh_from_editor(self):
         self.refresh_time()
@@ -2186,8 +2447,14 @@ class AlarmAppSettingsPage(BoxLayout):
         self.refresh_days()
         self.volume_control.value = float(self.editor.volume)
         self.vibration_switch.value = bool(self.editor.vibrate)
+        self.snooze_switch.value = bool(self.editor.snooze_enabled)
+        self.dismiss_switch.value = bool(
+            self.editor.auto_dismiss_enabled or self.editor.auto_snooze_enabled
+        )
+        self.auto_snooze_switch.value = bool(self.editor.auto_snooze_enabled)
         self.dismiss_control._set_value(int(self.editor.auto_dismiss_sec))
-        self.snooze_control._set_value(int(self.editor.snooze_sec))
+        self._update_setting_summaries()
+        self._sync_setting_controls(animate=False)
         self.error_label.text = self.editor.error_message
         # Keep the legacy delete feature available only when editing a saved alarm.
         editing_existing = bool(self.editor.editing_id)
@@ -2197,12 +2464,118 @@ class AlarmAppSettingsPage(BoxLayout):
             self.footer.remove_widget(self.delete_button)
 
 
+class SnoozeSettingsPage(BoxLayout):
+    """Manual delay and an independent maximum number of Snooze presses."""
+    def __init__(self, editor, on_back, **kwargs):
+        super().__init__(orientation="vertical", padding=(dp(14), dp(12)), spacing=dp(9), **kwargs)
+        self.editor = editor
+        self.on_back = on_back
+
+        top = BoxLayout(orientation="horizontal", spacing=dp(8),
+                        size_hint_y=None, height=dp(44))
+        top.add_widget(RoundedActionButton(
+            "‹ BACK", callback=on_back, accent=False,
+            size_hint=(None, None), size=(dp(88), dp(40)),
+        ))
+        top.add_widget(Label(text="SNOOZE SETTINGS", color=TEXT,
+                             font_size=sp(17), bold=True, halign="left"))
+        self.add_widget(top)
+
+        self.card = RoundedPanel(
+            fill=CARD, radius=dp(24), orientation="vertical",
+            padding=(dp(14), dp(14), dp(14), dp(12)), spacing=dp(9),
+            size_hint=(1, 1),
+        )
+        self.add_widget(self.card)
+        intro = Label(
+            text="Choose the delay used when you manually press Snooze.",
+            color=SUB, font_size=sp(11), halign="left", valign="middle",
+            size_hint_y=None, height=dp(34),
+        )
+        intro.bind(size=lambda w, v: setattr(w, "text_size", v))
+        self.card.add_widget(intro)
+
+        self.manual_control = DurationRow(
+            "MANUAL SNOOZE DURATION", "Used when you press the Snooze button",
+            int(editor.snooze_sec), 3, 3600,
+            lambda value: setattr(editor, "snooze_sec", int(value)),
+            icon=SnoozeIcon, size_hint_y=None, height=dp(54),
+        )
+        self.card.add_widget(self.manual_control)
+        self.manual_count_control = RepeatCountRow(
+            int(editor.snooze_max_count),
+            lambda value: setattr(editor, "snooze_max_count", int(value)),
+            title="MAX SNOOZES", subtitle="Manual Snooze presses only",
+            size_hint_y=None, height=dp(46),
+        )
+        self.card.add_widget(self.manual_count_control)
+        self.card.add_widget(Widget())
+        self.card.add_widget(RoundedActionButton(
+            "DONE", callback=on_back, accent=True,
+            size_hint_y=None, height=dp(46),
+        ))
+
+    def refresh(self):
+        self.manual_control._set_value(int(self.editor.snooze_sec))
+        self.manual_count_control.set_value(int(self.editor.snooze_max_count))
+
+
+class AutoSnoozeSettingsPage(BoxLayout):
+    """Automatic repeat settings; the master switch stays on the main page."""
+    def __init__(self, editor, on_back, **kwargs):
+        super().__init__(orientation="vertical", padding=(dp(14), dp(12)), spacing=dp(9), **kwargs)
+        self.editor = editor
+        top = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(44))
+        top.add_widget(RoundedActionButton("‹ BACK", callback=on_back, accent=False,
+                                           size_hint=(None, None), size=(dp(88), dp(40))))
+        top.add_widget(Label(text="AUTO SNOOZE SETTINGS", color=TEXT, font_size=sp(17), bold=True))
+        self.add_widget(top)
+        self.card = RoundedPanel(fill=CARD, radius=dp(24), orientation="vertical",
+                                 padding=(dp(14), dp(14), dp(14), dp(12)), spacing=dp(9),
+                                 size_hint=(1, 1))
+        self.add_widget(self.card)
+        intro = Label(text="Each automatic ring plays for the ring duration, then stays silent for the repeat interval.",
+                      color=SUB, font_size=sp(11), halign="left", valign="middle",
+                      size_hint_y=None, height=dp(42))
+        intro.bind(size=lambda w, v: setattr(w, "text_size", v))
+        self.card.add_widget(intro)
+        self.ring_control = DurationRow(
+            "RING DURATION", "How long each automatic ring sounds",
+            int(editor.auto_dismiss_sec), 1, 10800,
+            lambda value: setattr(editor, "auto_dismiss_sec", int(value)),
+            icon=AutoDismissIcon, size_hint_y=None, height=dp(54),
+        )
+        self.card.add_widget(self.ring_control)
+        self.interval_control = DurationRow(
+            "REPEAT AFTER", "Silent interval before the next ring",
+            int(editor.auto_snooze_interval_sec), 3, 3600,
+            lambda value: setattr(editor, "auto_snooze_interval_sec", int(value)),
+            icon=SnoozeIcon, size_hint_y=None, height=dp(54),
+        )
+        self.card.add_widget(self.interval_control)
+        self.count_control = RepeatCountRow(
+            int(editor.auto_snooze_max_count),
+            lambda value: setattr(editor, "auto_snooze_max_count", int(value)),
+            title="MAX AUTO REPEATS", subtitle="Automatic repeats only",
+            size_hint_y=None, height=dp(46),
+        )
+        self.card.add_widget(self.count_control)
+        self.card.add_widget(Widget())
+        self.card.add_widget(RoundedActionButton("DONE", callback=on_back, accent=True,
+                                                   size_hint_y=None, height=dp(46)))
+    def refresh(self):
+        self.ring_control._set_value(int(self.editor.auto_dismiss_sec))
+        self.interval_control._set_value(int(self.editor.auto_snooze_interval_sec))
+        self.count_control.set_value(int(self.editor.auto_snooze_max_count))
+
+
 class SoundSelectionPage(BoxLayout):
     """Neon audition page: preview freely, then explicitly use a candidate."""
     def __init__(self, editor, on_back, **kwargs):
         super().__init__(orientation="vertical", padding=(dp(16), dp(14)), spacing=dp(8), **kwargs)
         self.editor = editor
         self.on_back = on_back
+        self.preview_controls = []
         top = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(44), spacing=dp(8))
         top.add_widget(RoundedActionButton("‹ BACK", callback=self._back, accent=False,
                                            size_hint=(None, None), size=(dp(86), dp(40))))
@@ -2212,25 +2585,36 @@ class SoundSelectionPage(BoxLayout):
                                    font_size=sp(12), size_hint_y=None, height=dp(23), halign="left")
         self.current_label.bind(size=lambda w, v: setattr(w, "text_size", v))
         self.add_widget(self.current_label)
-        self.note = Label(text="Tap PREVIEW to listen. Using a sound is a separate action.",
-                          color=SUB, font_size=sp(10.5), size_hint_y=None, height=dp(28),
+        self.note = Label(text="Preview uses phone MEDIA volume. RING LEVEL sets saved alarm loudness.",
+                          color=SUB, font_size=sp(10.5), size_hint_y=None, height=dp(38),
                           halign="left", valign="middle")
         self.note.bind(size=lambda w, v: setattr(w, "text_size", v))
         self.add_widget(self.note)
-        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(2))
+        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(2),
+                            effect_cls=DampedScrollEffect)
         self.choices = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(7),
                                  padding=(0, dp(2), 0, dp(2)))
         self.choices.bind(minimum_height=self.choices.setter("height"))
         scroll.add_widget(self.choices)
         self.add_widget(scroll)
         volume_row = BoxLayout(orientation="horizontal", spacing=dp(8),
-                               size_hint_y=None, height=dp(38))
+                               size_hint_y=None, height=dp(44))
         volume_row.add_widget(SpeakerIcon(color=TEXT, size=(dp(24), dp(24))))
-        volume_row.add_widget(Label(text="ALARM VOLUME", color=SUB, font_size=sp(10), bold=True,
+        volume_row.add_widget(Label(text="RING LEVEL", color=SUB, font_size=sp(10), bold=True,
                                     size_hint=(None, 1), width=dp(91)))
         self.volume_control = VolumeControl(value=float(self.editor.volume), size_hint=(1, 1))
         self.volume_control.bind(value=self._volume_changed)
         volume_row.add_widget(self.volume_control)
+        self.volume_percent_label = Label(
+            text=self.volume_control.percent_text, color=TEXT, font_size=sp(11),
+            bold=True, size_hint=(None, 1), width=dp(38),
+            halign="right", valign="middle",
+        )
+        self.volume_percent_label.bind(size=lambda w, v: setattr(w, "text_size", v))
+        self.volume_control.bind(
+            percent_text=lambda _widget, value: setattr(self.volume_percent_label, "text", value)
+        )
+        volume_row.add_widget(self.volume_percent_label)
         self.add_widget(volume_row)
         self.add_widget(RoundedActionButton("BROWSE LOCAL MUSIC", callback=self.editor.choose_sound,
                                             accent=False, size_hint_y=None, height=dp(42)))
@@ -2242,76 +2626,123 @@ class SoundSelectionPage(BoxLayout):
         self.on_back()
 
     def _volume_changed(self, _widget, value):
-        self.editor.volume = max(0.0, min(1.0, float(value)))
+        self.editor.set_alarm_volume(value)
 
     def _candidate(self, name, path):
         self.editor.set_builtin_sound(name, path)
 
     def _add_choice(self, name, select_path, preview_path):
-        row = BoxLayout(orientation="horizontal", spacing=dp(7), size_hint_y=None,
-                        height=dp(48), padding=(dp(7), dp(4)))
-        selected = (str(select_path or "") == str(self.editor._sound_candidate_path or "")
-                    and str(name) == str(self.editor._sound_candidate_name or "Default beep"))
-        label = Label(text=("●  " if selected else "○  ") + name,
-                      color=(1, 0.28, 0.36, 1) if selected else TEXT,
-                      bold=selected, font_size=sp(12), halign="left", valign="middle")
+        selected = (
+            str(select_path or "") == str(self.editor._sound_candidate_path or "")
+            and str(name) == str(self.editor._sound_candidate_name or "Default beep")
+        )
+        row = BoxLayout(
+            orientation="horizontal", spacing=dp(7), size_hint_y=None,
+            height=dp(58), padding=(dp(8), dp(5)),
+        )
+        add_rounded_background(
+            row, (0.045, 0.045, 0.052, 1), radius=13,
+            edge=(RED[0], RED[1], RED[2], 0.92 if selected else 0.35), edge_width=1.0,
+        )
+        label = Label(
+            text=("[x]  " if selected else "[ ]  ") + str(name),
+            color=TEXT, bold=selected, font_size=sp(12),
+            halign="left", valign="middle", size_hint=(1, 1),
+        )
         label.bind(size=lambda w, v: setattr(w, "text_size", v))
         row.add_widget(label)
-        row.add_widget(RoundedActionButton(
-            "PREVIEW", callback=lambda p=preview_path: self.editor.preview_sound(path=p, duration=8.0),
-            accent=False, size_hint=(None, None), size=(dp(75), dp(38)),
-        ))
+        preview_button = VectorPlayButton(
+            callback=lambda n=name, spath=select_path, p=preview_path:
+                self._toggle_preview(n, spath, p),
+            accent=selected, size_hint=(None, None), size=(dp(48), dp(48)),
+        )
+        row.add_widget(preview_button)
+        self.preview_controls.append((preview_button, str(preview_path or select_path or "")))
         row.add_widget(RoundedActionButton(
             "USE", callback=lambda n=name, p=select_path: self._candidate(n, p),
-            accent=selected, size_hint=(None, None), size=(dp(58), dp(38)),
+            accent=selected, size_hint=(None, None), size=(dp(62), dp(46)),
         ))
-        with row.canvas.before:
-            Color(0.075, 0.025, 0.032, 1)
-            row._bg = RoundedRectangle(pos=row.pos, size=row.size, radius=[dp(13)])
-            Color(0.58, 0.025, 0.05, 0.86 if selected else 0.38)
-            row._edge = Line(rounded_rectangle=(row.x, row.y, row.width, row.height, dp(13)),
-                             width=dp(1.0))
-        row.bind(pos=lambda w, *_: self._update_row_canvas(w),
-                 size=lambda w, *_: self._update_row_canvas(w))
         self.choices.add_widget(row)
 
-    @staticmethod
-    def _update_row_canvas(row):
-        row._bg.pos = row.pos
-        row._bg.size = row.size
-        row._edge.rounded_rectangle = (row.x, row.y, row.width, row.height, dp(13))
+    def _toggle_preview(self, name, select_path, preview_path):
+        path = str(preview_path or select_path or "")
+        if not path:
+            path = str(getattr(App.get_running_app(), "default_ringtone_path", "") or "")
+        if not path:
+            self.note.text = "This sound has no playable file. Choose another tone or local file."
+            return
+        self.editor.toggle_preview_sound(path=path, duration=30.0)
+
+    def set_preview_playing(self, path, playing):
+        active = str(path or "") if playing else ""
+        for button, button_path in self.preview_controls:
+            button.set_playing(bool(active and button_path == active))
 
     def refresh(self):
-        self.volume_control.value = float(self.editor.volume)
+        # Rebuild after navigation. A picked local track is shown FIRST so it
+        # cannot be hidden below the built-in tones in the scroll area.
+        try:
+            self.volume_control.value = float(self.editor.volume)
+        except (TypeError, ValueError):
+            pass
         self.choices.clear_widgets()
-        candidate_name = str(self.editor._sound_candidate_name or "Default beep")
-        self.current_label.text = "Candidate: {}  ·  press USE SELECTED SOUND to return".format(candidate_name)
+        self.preview_controls = []
+        candidate_name = str(self.editor._sound_candidate_name or "Classic Beep")
+        candidate_path = str(self.editor._sound_candidate_path or "")
+        self.current_label.text = "Selected sound: {}".format(candidate_name)
+
         app = App.get_running_app()
-        self._add_choice("Default beep", "", app.default_ringtone_path)
-        seen_paths = {str(app.default_ringtone_path)}
+        default_path = str(getattr(app, "default_ringtone_path", "") or "")
+        seen_paths = set()
+
+        # Put the current file/candidate at the top. The name passed to _add_choice
+        # exactly matches the saved candidate name, so the selected marker is correct.
+        if candidate_path and os.path.isfile(candidate_path):
+            try:
+                self._add_choice(candidate_name, candidate_path, candidate_path)
+                seen_paths.add(candidate_path)
+            except Exception as exc:
+                print("[RedAlarm] selected candidate row failed:", exc)
+
+        try:
+            self._add_choice("Classic Beep", "", default_path)
+            if default_path:
+                seen_paths.add(default_path)
+        except Exception as exc:
+            print("[RedAlarm] default ringtone row failed:", exc)
+
         try:
             builtin_choices = list(self.editor.builtin_sound_choices() or [])
-            self.note.text = (
-                "Built-in sounds ready — PREVIEW uses 100% player gain."
-                if builtin_choices else
-                "Default beep remains available. Try BROWSE LOCAL MUSIC for other sounds."
-            )
         except Exception as exc:
-            # Sound discovery must never stop the chooser. Individual tone
-            # generation failures are isolated by ensure_builtin_ringtones().
             print("[RedAlarm] could not load built-in ringtone list:", exc)
             builtin_choices = []
-            self.note.text = "Default beep remains available. Try BROWSE LOCAL MUSIC for other sounds."
+
         for name, path in builtin_choices:
             full_path = str(path or "")
             if not full_path or full_path in seen_paths:
                 continue
             seen_paths.add(full_path)
-            self._add_choice(str(name), full_path, full_path)
-        candidate_path = str(self.editor._sound_candidate_path or "")
-        if candidate_path and candidate_path not in seen_paths:
-            self._add_choice("Local: " + candidate_name, candidate_path, candidate_path)
+            try:
+                self._add_choice(str(name), full_path, full_path)
+            except Exception as exc:
+                print("[RedAlarm] ringtone row failed:", name, exc)
 
+        if not self.choices.children:
+            fallback = Label(
+                text="No built-in tones available.\nUse BROWSE LOCAL MUSIC below.",
+                color=TEXT, font_size=sp(12), halign="center", valign="middle",
+                size_hint_y=None, height=dp(52),
+            )
+            fallback.bind(size=lambda w, v: setattr(w, "text_size", v))
+            self.choices.add_widget(fallback)
+
+        builtin_paths = {str(path or "") for _name, path in builtin_choices}
+        if candidate_path and candidate_path in builtin_paths:
+            self.note.text = "Built-in tone selected. Tap Play to preview, Stop to end, then USE SELECTED SOUND to apply."
+        elif candidate_path and os.path.isfile(candidate_path):
+            self.note.text = "Local file selected. Tap Play to preview, Stop to end, then USE SELECTED SOUND to apply."
+        else:
+            self.note.text = "Preview follows phone MEDIA volume. RING LEVEL sets the saved alarm loudness."
 
 class AlarmEditorUI(ScreenManager):
     """Single-page alarm editor with the time wheel and settings together."""
@@ -2331,13 +2762,13 @@ class AlarmEditorUI(ScreenManager):
         self.sound_screen.add_widget(self.sound_page)
         self.add_widget(self.sound_screen)
         self.snooze_screen = Screen(name="snooze")
-        self.snooze_page = DurationSelectionPage(editor, "snooze_sec", "SNOOZE", "Repeat alarm after", 3, 3600, SnoozeIcon, self.show_settings)
+        self.snooze_page = SnoozeSettingsPage(editor, on_back=self.show_settings)
         self.snooze_screen.add_widget(self.snooze_page)
         self.add_widget(self.snooze_screen)
-        self.auto_dismiss_screen = Screen(name="auto_dismiss")
-        self.auto_dismiss_page = DurationSelectionPage(editor, "auto_dismiss_sec", "AUTO-DISMISS", "Stop the alarm automatically after", 1, 3600, AutoDismissIcon, self.show_settings)
-        self.auto_dismiss_screen.add_widget(self.auto_dismiss_page)
-        self.add_widget(self.auto_dismiss_screen)
+        self.auto_snooze_screen = Screen(name="auto_snooze")
+        self.auto_snooze_page = AutoSnoozeSettingsPage(editor, on_back=self.show_settings)
+        self.auto_snooze_screen.add_widget(self.auto_snooze_page)
+        self.add_widget(self.auto_snooze_screen)
         self.vibration_screen = Screen(name="vibration")
         self.vibration_page = VibrationSelectionPage(editor, self.show_settings)
         self.vibration_screen.add_widget(self.vibration_page)
@@ -2353,24 +2784,33 @@ class AlarmEditorUI(ScreenManager):
     def show_sound(self):
         if hasattr(self, "transition"):
             self.transition.direction = "left"
-        # Navigate first: ringtone discovery errors must not keep the editor
-        # stuck on settings instead of opening the sound chooser.
         self.current = "sound"
+        Clock.schedule_once(self._refresh_sound_page, 0)
+
+    def _refresh_sound_page(self, _dt=0):
+        if self.current != "sound":
+            return False
         try:
             self.sound_page.refresh()
         except Exception as exc:
             print("[RedAlarm] sound-page refresh failed:", exc)
             self.sound_page.note.text = "Built-in tones unavailable. Try BROWSE LOCAL MUSIC."
+        return False
 
     def show_snooze(self):
         self.snooze_page.refresh()
         self.transition.direction = "left"
         self.current = "snooze"
 
-    def show_auto_dismiss(self):
-        self.auto_dismiss_page.refresh()
+    def show_auto_snooze(self):
+        self.auto_snooze_page.refresh()
         self.transition.direction = "left"
-        self.current = "auto_dismiss"
+        self.current = "auto_snooze"
+
+    def show_auto_dismiss(self):
+        """Compatibility route: Auto Dismiss now expands on the main settings page."""
+        self.show_settings()
+        self.settings_page.expand_auto_dismiss()
 
     def show_vibration(self):
         self.vibration_page.refresh()

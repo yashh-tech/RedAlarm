@@ -9,6 +9,7 @@ from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.image import Image
 from kivy.uix.label import Label
+from kivy.uix.button import Button
 from kivy.uix.widget import Widget
 
 class LoadingBar(Widget):
@@ -139,6 +140,48 @@ class SplashScreen(FloatLayout):
             1 / 60
         )
 
+    def clear_startup_error(self):
+        for name in ("_startup_error_detail", "_startup_retry_button"):
+            widget = getattr(self, name, None)
+            if widget is not None and widget.parent is not None:
+                widget.parent.remove_widget(widget)
+            setattr(self, name, None)
+        self.loading_text.text = "Loading... 0%"
+        self.loading_text.color = (0.7, 0.7, 0.7, 1)
+        self.elapsed = 0
+        self.loading_bar.progress = 0
+
+    def show_startup_error(self, message, retry_callback=None):
+        self.clear_startup_error()
+        self.loading_text.text = "STARTUP NEEDS ATTENTION"
+        self.loading_text.color = (1, 0.25, 0.3, 1)
+        self._startup_error_detail = Label(
+            text=str(message)[:220],
+            color=(0.9, 0.9, 0.9, 1),
+            font_size="12sp",
+            halign="center",
+            valign="middle",
+            size_hint=(0.9, None),
+            height=dp(86),
+            pos_hint={"center_x": 0.5, "center_y": 0.22},
+        )
+        self._startup_error_detail.bind(
+            size=lambda widget, value: setattr(widget, "text_size", value)
+        )
+        self.add_widget(self._startup_error_detail)
+        if retry_callback is not None:
+            self._startup_retry_button = Button(
+                text="RETRY STARTUP",
+                size_hint=(0.62, None),
+                height=dp(46),
+                pos_hint={"center_x": 0.5, "y": 0.055},
+                background_normal="",
+                background_color=(0.62, 0.025, 0.06, 1),
+                color=(1, 1, 1, 1),
+            )
+            self._startup_retry_button.bind(on_release=lambda *_: retry_callback())
+            self.add_widget(self._startup_retry_button)
+
     def update_bg(self, *args):
         self.bg.pos = self.pos
         self.bg.size = self.size
@@ -157,7 +200,7 @@ class SplashScreen(FloatLayout):
         )
 
         if percentage >= 100:
-            self.loading_text.text = "Ready!"
+            self.loading_text.text = "Opening RedAlarm..."
             return False
 
     def on_parent(self, instance, parent):
