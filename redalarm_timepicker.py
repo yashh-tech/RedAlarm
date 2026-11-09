@@ -184,6 +184,82 @@ class SpeakerIcon(Widget):
             line.points = pts
 
 
+class RepeatIcon(Widget):
+    """Compact two-arrow repeat icon shared by edit and confirmation screens."""
+    def __init__(self, color=SUB, **kwargs):
+        kwargs.setdefault("size_hint", (None, None))
+        kwargs.setdefault("size", (dp(24), dp(24)))
+        super().__init__(**kwargs)
+        with self.canvas:
+            Color(rgba=color)
+            self._paths = [Line(points=[], width=dp(1.45)) for _ in range(6)]
+        self.bind(pos=self._sync, size=self._sync)
+        self._sync()
+
+    def _sync(self, *_):
+        x, y = self.pos
+        w, h = self.size
+        cx, cy = x + w * 0.5, y + h * 0.5
+        upper, upper_a, upper_b, lower, lower_a, lower_b = self._paths
+        upper.points = [x + w * 0.16, cy + h * 0.18, x + w * 0.78, cy + h * 0.18]
+        upper_a.points = [x + w * 0.62, cy + h * 0.34, x + w * 0.79, cy + h * 0.18]
+        upper_b.points = [x + w * 0.62, cy + h * 0.02, x + w * 0.79, cy + h * 0.18]
+        lower.points = [x + w * 0.84, cy - h * 0.18, x + w * 0.22, cy - h * 0.18]
+        # The lower arrowhead uses two short arms around its left-facing tip.
+        lower_a.points = [x + w * 0.38, cy - h * 0.02, x + w * 0.21, cy - h * 0.18]
+        lower_b.points = [x + w * 0.38, cy - h * 0.34, x + w * 0.21, cy - h * 0.18]
+
+
+class VolumeIcon(Widget):
+    """Three tactile level sliders used for the alarm-volume setting."""
+    def __init__(self, color=SUB, **kwargs):
+        kwargs.setdefault("size_hint", (None, None))
+        kwargs.setdefault("size", (dp(23), dp(24)))
+        super().__init__(**kwargs)
+        with self.canvas:
+            Color(rgba=color)
+            self._tracks = [Line(points=[], width=dp(1.25)) for _ in range(3)]
+            self._knobs = [Ellipse(pos=self.pos, size=(dp(4.6), dp(4.6))) for _ in range(3)]
+        self.bind(pos=self._sync, size=self._sync)
+        self._sync()
+
+    def _sync(self, *_):
+        x, y = self.pos
+        w, h = self.size
+        levels = (0.34, 0.68, 0.49)
+        for index, (track, knob, level) in enumerate(zip(self._tracks, self._knobs, levels)):
+            xx = x + w * (0.22 + index * 0.28)
+            track.points = [xx, y + h * 0.14, xx, y + h * 0.86]
+            knob_size = dp(4.6)
+            knob.pos = (xx - knob_size / 2, y + h * level - knob_size / 2)
+            knob.size = (knob_size, knob_size)
+
+
+class SettingsSlidersIcon(Widget):
+    """Small horizontal-sliders glyph for the Alarm Options panel heading."""
+    def __init__(self, color=SUB, **kwargs):
+        kwargs.setdefault("size_hint", (None, None))
+        kwargs.setdefault("size", (dp(23), dp(23)))
+        super().__init__(**kwargs)
+        with self.canvas:
+            Color(rgba=color)
+            self._tracks = [Line(points=[], width=dp(1.35)) for _ in range(3)]
+            self._knobs = [Ellipse(pos=self.pos, size=(dp(4.5), dp(4.5))) for _ in range(3)]
+        self.bind(pos=self._sync, size=self._sync)
+        self._sync()
+
+    def _sync(self, *_):
+        x, y = self.pos
+        w, h = self.size
+        positions = (0.36, 0.68, 0.48)
+        for index, (track, knob, position) in enumerate(zip(self._tracks, self._knobs, positions)):
+            yy = y + h * (0.22 + index * 0.28)
+            track.points = [x + w * 0.10, yy, x + w * 0.90, yy]
+            knob_size = dp(4.5)
+            knob.pos = (x + w * position - knob_size / 2, yy - knob_size / 2)
+            knob.size = (knob_size, knob_size)
+
+
 class VectorPlayButton(Button):
     """Crisp vector play/pause button; no emoji/glyph dependency or blurry icon image."""
     playing = BooleanProperty(False)
@@ -1327,8 +1403,9 @@ class SettingOptionRow(BoxLayout):
         holder = AnchorLayout(anchor_x="center", anchor_y="center",
                               size_hint=(None, 1), width=dp(30))
         icon_types = {
-            "sound": SpeakerIcon, "snooze": SnoozeIcon,
-            "auto_dismiss": AutoDismissIcon, "vibration": VibrationIcon,
+            "sound": SpeakerIcon, "repeat": RepeatIcon, "volume": VolumeIcon,
+            "snooze": SnoozeIcon, "auto_dismiss": AutoDismissIcon,
+            "vibration": VibrationIcon,
         }
         icon_type = icon_types[icon_kind]
         icon_size = (dp(25), dp(25)) if icon_kind in ("sound", "vibration") else (dp(24), dp(24))
@@ -2071,6 +2148,8 @@ class AlarmAppSettingsPage(BoxLayout):
             AutoDismissIcon: "auto_dismiss",
             VibrationIcon: "vibration",
             SpeakerIcon: "sound",
+            RepeatIcon: "repeat",
+            VolumeIcon: "volume",
         }.get(icon_type)
         if icon_kind is None:
             raise ValueError("Unsupported setting icon: {}".format(icon_type))
@@ -2206,7 +2285,11 @@ class AlarmAppSettingsPage(BoxLayout):
         self.card.add_widget(scroll)
 
         repeat = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(54), spacing=dp(2))
-        repeat.add_widget(self._label("REPEAT", 11.5, SUB, True, dp(18)))
+        repeat_heading = BoxLayout(orientation="horizontal", spacing=dp(7),
+                                   size_hint_y=None, height=dp(18))
+        repeat_heading.add_widget(RepeatIcon(color=SUB, size=(dp(19), dp(18))))
+        repeat_heading.add_widget(self._label("REPEAT", 11.5, SUB, True, dp(18)))
+        repeat.add_widget(repeat_heading)
         day_row = BoxLayout(orientation="horizontal", spacing=dp(5), size_hint_y=None, height=dp(34))
         for index, (short, full) in enumerate(self.DAYS):
             button = DayPill(text=short, height=dp(34), size_hint=(1, None))
@@ -2231,7 +2314,7 @@ class AlarmAppSettingsPage(BoxLayout):
         note_holder = AnchorLayout(
             anchor_x="center", anchor_y="center", size_hint=(None, 1), width=dp(25)
         )
-        note_holder.add_widget(MusicNoteIcon(color=RED, size=(dp(20), dp(23))))
+        note_holder.add_widget(SpeakerIcon(color=SUB, size=(dp(23), dp(23))))
         sound_row.add_widget(note_holder)
         self.sound_name_label = Label(
             text="Default beep", color=TEXT, font_size=sp(12), bold=True,
@@ -2255,7 +2338,7 @@ class AlarmAppSettingsPage(BoxLayout):
         volume_row = BoxLayout(orientation="horizontal", spacing=dp(8),
                                size_hint_y=None, height=dp(40))
         speaker_holder = AnchorLayout(anchor_x="center", anchor_y="center", size_hint=(None, 1), width=dp(27))
-        speaker_holder.add_widget(SpeakerIcon(color=SUB, size=(dp(25), dp(24))))
+        speaker_holder.add_widget(VolumeIcon(color=SUB, size=(dp(23), dp(24))))
         volume_row.add_widget(speaker_holder)
         self.volume_control = VolumeControl(value=float(getattr(self.editor, "volume", 0.80)),
                                             size_hint=(1, 1))
